@@ -1,0 +1,103 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**'
+      - '.github/workflows/deploy-backend.yml'
+
+concurrency:
+  group: deploy-backend-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure remote .env exists
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            if [ ! -f "${{ secrets.DEPLOY_PATH }}/.env" ]; then
+              echo "Missing ${{ secrets.DEPLOY_PATH }}/.env on server"
+              exit 1
+            fi
+
+      - name: Backup remote .env before sync
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            cp "${{ secrets.DEPLOY_PATH }}/.env" /tmp/casamento.backend.env.bak
+
+      - name: Sync backend sources
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          source: ./
+          target: ${{ secrets.DEPLOY_PATH }}/
+          strip_components: 1
+          rm: true
+          overwrite: true
+
+      - name: Restore remote .env after sync
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            mv /tmp/casamento.backend.env.bak "${{ secrets.DEPLOY_PATH }}/.env"
+
+      - name: Build and restart backend
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.DEPLOY_PATH }}"
+            docker compose -f deploy/docker-compose.yml build --pull
+            docker compose -f deploy/docker-compose.yml up -d --remove-orphans
+            docker compose -f deploy/docker-compose.yml ps
+
+      - name: Verify health endpoint
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            for attempt in $(seq 1 30); do
+              if curl -kfsS https://127.0.0.1/health -H 'Host: api.tiagoegabriela.com.br' >/dev/null; then
+                curl -kfsS https://127.0.0.1/health -H 'Host: api.tiagoegabriela.com.br'
+                exit 0
+              fi
+              sleep 3
+            done
+            echo "Health check failed"
+            docker logs casamento_api --tail 100
+            exit 1
