@@ -1,0 +1,101 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Admin {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
+
+model GuestGroup {
+  id            String        @id @default(uuid())
+  displayName   String
+  searchNames   String[]
+  maxCompanions Int           @default(0)
+  phone         String?
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  rsvpResponse  RsvpResponse?
+}
+
+model RsvpResponse {
+  id              String     @id @default(uuid())
+  guestGroup      GuestGroup @relation(fields: [guestGroupId], references: [id])
+  guestGroupId    String     @unique
+  attending       Boolean
+  companionsCount Int        @default(0)
+  companionNames  String?
+  diet            String?
+  message         String?
+  respondedIp     String?
+  respondedAt     DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+}
+
+model Gift {
+  id            String         @id @default(uuid())
+  externalId    String         @unique
+  title         String
+  description   String
+  iconName      String
+  priceCents    Int
+  tag           String?
+  active        Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  paymentOrders PaymentOrder[]
+}
+
+enum PaymentKind {
+  FIXED_GIFT
+  FREE_CONTRIBUTION
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  EXPIRED
+  FAILED
+}
+
+model PaymentOrder {
+  id                   String        @id @default(uuid())
+  gift                 Gift?         @relation(fields: [giftId], references: [id])
+  giftId               String?
+  kind                 PaymentKind
+  amountCents          Int
+  donorName            String?
+  donorMessage         String?
+  status               PaymentStatus @default(PENDING)
+  abacateTransparentId String?
+  brCode               String?
+  brCodeBase64         String?
+  expiresAt            DateTime?
+  paidAt               DateTime?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+}
+
+model GuestMessage {
+  id        String   @id @default(uuid())
+  name      String
+  text      String
+  createdAt DateTime @default(now())
+}
+
+model WebhookEvent {
+  id              String    @id @default(uuid())
+  providerEventId String    @unique
+  payload         Json
+  receivedAt      DateTime  @default(now())
+  processedAt     DateTime?
+}

@@ -1,0 +1,24 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: casamento-backend:latest
+    container_name: casamento_api
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=inboxflow-network
+      - traefik.http.routers.casamento-api.rule=Host(`api.tiagoegabriela.com.br`)
+      - traefik.http.routers.casamento-api.entrypoints=web,websecure
+      - traefik.http.routers.casamento-api.tls.certresolver=letsencrypt
+      - traefik.http.routers.casamento-api.service=casamento-api
+      - traefik.http.services.casamento-api.loadbalancer.server.port=3000
+    networks:
+      - inboxflow-network
+
+networks:
+  inboxflow-network:
+    external: true
