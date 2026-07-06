@@ -47,6 +47,7 @@ model Gift {
   title         String
   description   String
   iconName      String
+  imagePath     String?
   priceCents    Int
   tag           String?
   active        Boolean        @default(true)
