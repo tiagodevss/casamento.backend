@@ -42,9 +42,8 @@ export class AbacatePayService {
       brCode: string;
       brCodeBase64: string;
     }>('post', '/transparents/create', {
-      // AbacatePay's request body itself is wrapped in a top-level `data` key
-      // (documented as `data.amount`, `data.description`, etc).
       data: {
+        method: 'PIX',
         data: {
           amount: params.amountCents,
           description: params.description,
@@ -62,7 +61,10 @@ export class AbacatePayService {
   }
 
   async simulatePayment(transparentId: string): Promise<void> {
-    await this.request('post', '/transparents/simulate-payment', { data: { id: transparentId } });
+    await this.request('post', '/transparents/simulate-payment', {
+      params: { id: transparentId },
+      data: {},
+    });
   }
 
   private async request<T>(
