@@ -31,7 +31,6 @@ export class RsvpService {
     return candidates.map((group) => ({
       id: group.id,
       displayName: group.displayName,
-      maxCompanions: group.maxCompanions,
       invitedToParty: group.invitedToParty,
       hasResponded: Boolean(group.rsvpResponse),
     }));
@@ -40,12 +39,6 @@ export class RsvpService {
   async confirm(guestGroupId: string, dto: ConfirmRsvpDto, ip?: string) {
     const group = await this.prisma.guestGroup.findUnique({ where: { id: guestGroupId } });
     if (!group) throw new NotFoundException('Convidado não encontrado');
-
-    if (dto.companionsCount > group.maxCompanions) {
-      throw new BadRequestException(
-        `Este convite permite no máximo ${group.maxCompanions} acompanhante(s)`,
-      );
-    }
 
     if (dto.partyAttending !== undefined && !group.invitedToParty) {
       throw new BadRequestException('Este convite não inclui a festa');
@@ -57,8 +50,6 @@ export class RsvpService {
         guestGroupId,
         attending: dto.attending,
         partyAttending: group.invitedToParty ? dto.partyAttending ?? null : null,
-        companionsCount: dto.companionsCount,
-        companionNames: dto.companionNames,
         diet: dto.diet,
         message: dto.message,
         respondedIp: ip,
@@ -66,8 +57,6 @@ export class RsvpService {
       update: {
         attending: dto.attending,
         partyAttending: group.invitedToParty ? dto.partyAttending ?? null : null,
-        companionsCount: dto.companionsCount,
-        companionNames: dto.companionNames,
         diet: dto.diet,
         message: dto.message,
         respondedIp: ip,

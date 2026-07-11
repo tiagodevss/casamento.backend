@@ -19,7 +19,6 @@ model GuestGroup {
   id            String        @id @default(uuid())
   displayName   String
   searchNames   String[]
-  maxCompanions Int           @default(0)
   invitedToParty Boolean      @default(false)
   phone         String?
   notes         String?
@@ -34,8 +33,6 @@ model RsvpResponse {
   guestGroupId    String     @unique
   attending       Boolean
   partyAttending  Boolean?
-  companionsCount Int        @default(0)
-  companionNames  String?
   diet            String?
   message         String?
   respondedIp     String?

@@ -1,4 +1,4 @@
-import { IsBoolean, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsOptional, IsString } from 'class-validator';
 
 export class ConfirmRsvpDto {
   @IsBoolean()
@@ -7,14 +7,6 @@ export class ConfirmRsvpDto {
   @IsOptional()
   @IsBoolean()
   partyAttending?: boolean;
-
-  @IsInt()
-  @Min(0)
-  companionsCount!: number;
-
-  @IsOptional()
-  @IsString()
-  companionNames?: string;
 
   @IsOptional()
   @IsString()

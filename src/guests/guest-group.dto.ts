@@ -1,4 +1,4 @@
-import { ArrayMinSize, IsArray, IsBoolean, IsInt, IsOptional, IsString, Min, MinLength } from 'class-validator';
+import { ArrayMinSize, IsArray, IsBoolean, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreateGuestGroupDto {
   @IsString()
@@ -9,10 +9,6 @@ export class CreateGuestGroupDto {
   @ArrayMinSize(1)
   @IsString({ each: true })
   searchNames!: string[];
-
-  @IsInt()
-  @Min(0)
-  maxCompanions!: number;
 
   @IsOptional()
   @IsBoolean()
@@ -38,11 +34,6 @@ export class UpdateGuestGroupDto {
   @ArrayMinSize(1)
   @IsString({ each: true })
   searchNames?: string[];
-
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  maxCompanions?: number;
 
   @IsOptional()
   @IsBoolean()
