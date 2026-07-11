@@ -20,6 +20,7 @@ model GuestGroup {
   displayName   String
   searchNames   String[]
   maxCompanions Int           @default(0)
+  invitedToParty Boolean      @default(false)
   phone         String?
   notes         String?
   createdAt     DateTime      @default(now())
@@ -32,6 +33,7 @@ model RsvpResponse {
   guestGroup      GuestGroup @relation(fields: [guestGroupId], references: [id])
   guestGroupId    String     @unique
   attending       Boolean
+  partyAttending  Boolean?
   companionsCount Int        @default(0)
   companionNames  String?
   diet            String?

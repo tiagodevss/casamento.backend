@@ -4,6 +4,10 @@ export class ConfirmRsvpDto {
   @IsBoolean()
   attending!: boolean;
 
+  @IsOptional()
+  @IsBoolean()
+  partyAttending?: boolean;
+
   @IsInt()
   @Min(0)
   companionsCount!: number;

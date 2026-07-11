@@ -32,6 +32,7 @@ export class RsvpService {
       id: group.id,
       displayName: group.displayName,
       maxCompanions: group.maxCompanions,
+      invitedToParty: group.invitedToParty,
       hasResponded: Boolean(group.rsvpResponse),
     }));
   }
@@ -46,11 +47,16 @@ export class RsvpService {
       );
     }
 
+    if (dto.partyAttending !== undefined && !group.invitedToParty) {
+      throw new BadRequestException('Este convite não inclui a festa');
+    }
+
     return this.prisma.rsvpResponse.upsert({
       where: { guestGroupId },
       create: {
         guestGroupId,
         attending: dto.attending,
+        partyAttending: group.invitedToParty ? dto.partyAttending ?? null : null,
         companionsCount: dto.companionsCount,
         companionNames: dto.companionNames,
         diet: dto.diet,
@@ -59,6 +65,7 @@ export class RsvpService {
       },
       update: {
         attending: dto.attending,
+        partyAttending: group.invitedToParty ? dto.partyAttending ?? null : null,
         companionsCount: dto.companionsCount,
         companionNames: dto.companionNames,
         diet: dto.diet,

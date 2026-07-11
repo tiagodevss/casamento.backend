@@ -25,7 +25,11 @@ export class GuestsService {
 
   create(dto: CreateGuestGroupDto) {
     return this.prisma.guestGroup.create({
-      data: { ...dto, searchNames: dto.searchNames.map(normalizeName) },
+      data: {
+        ...dto,
+        invitedToParty: dto.invitedToParty ?? false,
+        searchNames: dto.searchNames.map(normalizeName),
+      },
     });
   }
 
