@@ -23,6 +23,17 @@ export interface TransparentPixResult {
   brCodeBase64: string;
 }
 
+export interface HostedCheckoutResult {
+  id: string;
+  url: string;
+  status: string;
+}
+
+interface ProductResult {
+  id: string;
+  externalId: string;
+}
+
 @Injectable()
 export class AbacatePayService {
   private readonly baseUrl: string;
@@ -56,6 +67,59 @@ export class AbacatePayService {
     return body;
   }
 
+  async createHostedBilling(params: {
+    productId: string;
+    externalId: string;
+    returnUrl: string;
+    completionUrl: string;
+    metadata: Record<string, string>;
+    maxInstallments?: number;
+  }): Promise<HostedCheckoutResult> {
+    return this.request<HostedCheckoutResult>(
+      'post',
+      '/checkouts/create',
+      {
+        data: {
+          methods: ['CARD'],
+          items: [
+            {
+              id: params.productId,
+              quantity: 1,
+            },
+          ],
+          returnUrl: params.returnUrl,
+          completionUrl: params.completionUrl,
+          externalId: params.externalId,
+          metadata: params.metadata,
+          card: params.maxInstallments ? { maxInstallments: params.maxInstallments } : undefined,
+        },
+      },
+    );
+  }
+
+  async ensureProduct(params: {
+    externalId: string;
+    name: string;
+    description?: string;
+    priceCents: number;
+  }): Promise<ProductResult> {
+    try {
+      return await this.request<ProductResult>('post', '/products/create', {
+        data: {
+          externalId: params.externalId,
+          name: params.name,
+          description: params.description,
+          price: params.priceCents,
+          currency: 'BRL',
+        },
+      });
+    } catch (error) {
+      const existing = await this.findProductByExternalId(params.externalId);
+      if (existing) return existing;
+      throw error;
+    }
+  }
+
   async checkTransparentStatus(transparentId: string): Promise<{ status: string }> {
     return this.request('get', '/transparents/check', { params: { id: transparentId } });
   }
@@ -67,6 +131,11 @@ export class AbacatePayService {
     });
   }
 
+  private async findProductByExternalId(externalId: string): Promise<ProductResult | undefined> {
+    const products = await this.request<ProductResult[]>('get', '/products/list');
+    return products.find((product) => product.externalId === externalId);
+  }
+
   private async request<T>(
     method: 'get' | 'post',
     path: string,
@@ -76,7 +145,7 @@ export class AbacatePayService {
       const response = await firstValueFrom(
         this.http.request<AbacateEnvelope<T>>({
           method,
-          url: `${this.baseUrl}${path}`,
+          url: path.startsWith('http') ? path : `${this.baseUrl}${path}`,
           data: options.data,
           params: options.params,
           headers: { Authorization: `Bearer ${this.apiKey}` },

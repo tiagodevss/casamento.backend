@@ -5,7 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 interface AbacateWebhookPayload {
   id?: string;
   event?: string;
-  data?: { metadata?: { paymentOrderId?: string } };
+  data?: Record<string, unknown>;
 }
 
 @Injectable()
@@ -33,8 +33,9 @@ export class WebhooksService {
           data: { providerEventId, payload: payload as object },
         });
 
-    if (payload.event === 'transparent.completed') {
-      const paymentOrderId = payload.data?.metadata?.paymentOrderId;
+    const paymentOrderId = this.findPaymentOrderId(payload.data);
+
+    if (payload.event === 'transparent.completed' || payload.event === 'checkout.completed' || payload.event === 'billing.paid') {
       if (paymentOrderId) {
         await this.prisma.paymentOrder.updateMany({
           where: { id: paymentOrderId, status: { not: PaymentStatus.PAID } },
@@ -45,9 +46,40 @@ export class WebhooksService {
       }
     }
 
+    if (
+      payload.event === 'transparent.refunded' ||
+      payload.event === 'checkout.refunded' ||
+      payload.event === 'billing.refunded'
+    ) {
+      if (paymentOrderId) {
+        await this.prisma.paymentOrder.updateMany({
+          where: { id: paymentOrderId },
+          data: { status: PaymentStatus.FAILED },
+        });
+      }
+    }
+
     await this.prisma.webhookEvent.update({
       where: { id: event.id },
       data: { processedAt: new Date() },
     });
+  }
+
+  private findPaymentOrderId(input: unknown): string | undefined {
+    if (!input || typeof input !== 'object') return undefined;
+
+    const record = input as Record<string, unknown>;
+    const directMetadata = record.metadata;
+    if (directMetadata && typeof directMetadata === 'object') {
+      const paymentOrderId = (directMetadata as Record<string, unknown>).paymentOrderId;
+      if (typeof paymentOrderId === 'string' && paymentOrderId) return paymentOrderId;
+    }
+
+    for (const value of Object.values(record)) {
+      const nested = this.findPaymentOrderId(value);
+      if (nested) return nested;
+    }
+
+    return undefined;
   }
 }

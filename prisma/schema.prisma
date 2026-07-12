@@ -60,6 +60,11 @@ enum PaymentKind {
   FREE_CONTRIBUTION
 }
 
+enum PaymentMethod {
+  PIX
+  CARD
+}
+
 enum PaymentStatus {
   PENDING
   PAID
@@ -72,11 +77,14 @@ model PaymentOrder {
   gift                 Gift?         @relation(fields: [giftId], references: [id])
   giftId               String?
   kind                 PaymentKind
+  method               PaymentMethod @default(PIX)
   amountCents          Int
   donorName            String?
   donorMessage         String?
   status               PaymentStatus @default(PENDING)
   abacateTransparentId String?
+  abacateBillingId     String?
+  checkoutUrl          String?
   brCode               String?
   brCodeBase64         String?
   expiresAt            DateTime?

@@ -4,11 +4,11 @@ import { Request } from 'express';
 import { WebhooksService } from './webhooks.service';
 import { verifyHmacSignature } from './hmac.util';
 
-// NOTE: AbacatePay's llms.txt only documents that payloads are HMAC-signed with the
-// webhook `secret`, without naming the exact signature header. Confirm the real
-// header name in the AbacatePay dashboard/docs when registering the webhook and
-// update SIGNATURE_HEADER below before going live.
-const SIGNATURE_HEADER = 'x-abacatepay-signature';
+const SIGNATURE_HEADERS = [
+  'x-webhook-signature',
+  'x-abacate-signature',
+  'x-abacatepay-signature',
+] as const;
 
 @Controller('webhooks')
 export class WebhooksController {
@@ -20,10 +20,17 @@ export class WebhooksController {
   @Post('abacatepay')
   async handle(@Req() req: Request & { rawBody?: Buffer }, @Body() body: unknown) {
     const secret = this.config.getOrThrow<string>('ABACATEPAY_WEBHOOK_SECRET');
-    const signature = req.headers[SIGNATURE_HEADER] as string | undefined;
+    const providedSecret = Array.isArray(req.query.webhookSecret)
+      ? req.query.webhookSecret[0]
+      : req.query.webhookSecret;
+    const signature = SIGNATURE_HEADERS.map((header) => req.headers[header] as string | undefined).find(Boolean);
     const rawBody = req.rawBody ?? Buffer.from(JSON.stringify(body));
 
-    if (!verifyHmacSignature(rawBody, signature, secret)) {
+    if (providedSecret !== secret) {
+      throw new UnauthorizedException('Secret do webhook inválido');
+    }
+
+    if (!verifyHmacSignature(rawBody, signature)) {
       throw new UnauthorizedException('Assinatura inválida');
     }
 

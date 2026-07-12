@@ -8,6 +8,7 @@ export const envValidationSchema = Joi.object({
   ABACATEPAY_API_KEY: Joi.string().required(),
   ABACATEPAY_WEBHOOK_SECRET: Joi.string().required(),
   ABACATEPAY_BASE_URL: Joi.string().default('https://api.abacatepay.com/v2'),
+  APP_URL: Joi.string().uri().optional(),
   CORS_ORIGIN: Joi.string().allow('').default(''),
   UPLOADS_DIR: Joi.string().default('./uploads'),
 });
