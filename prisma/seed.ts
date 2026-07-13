@@ -29,6 +29,8 @@ const GIFTS_SEED = [
   { externalId: 'g-forminha-gelo', title: 'Kit de forminhas de gelo', description: 'Porque verão em casa própria pede caipirinha bem gelada.', iconName: 'Droplet', priceCents: 4000, tag: null },
   { externalId: 'g-tabua-corte', title: 'Tábua de corte de madeira nobre', description: 'Pro chef da casa cortar tudo com estilo (mesmo que só saiba fritar ovo).', iconName: 'UtensilsCrossed', priceCents: 9000, tag: null },
   { externalId: 'g-potes-mantimento', title: 'Potes herméticos organizadores', description: 'Adeus pacote de macarrão aberto com pregador de roupa.', iconName: 'Soup', priceCents: 11000, tag: null },
+  { externalId: 'g-panela-wok', title: 'Wok pra virar chef de comida oriental', description: 'Aquele yakisoba de sexta que só sai bom com a panela certa.', iconName: 'UtensilsCrossed', priceCents: 17000, tag: null },
+  { externalId: 'g-mixer-mao', title: 'Mixer de mão pra sopa e vitamina', description: 'Menos louça pra lavar, mais sopa de inverno cremosa igual de restaurante.', iconName: 'Sandwich', priceCents: 9000, tag: null },
 
   // Quarto
   { externalId: 'g-edredom', title: 'Edredom de inverno abraçável', description: 'Para as noites frias em que o maior luxo é não sair de baixo das cobertas.', iconName: 'Bed', priceCents: 24000, tag: 'Favorito' },
@@ -39,6 +41,7 @@ const GIFTS_SEED = [
   { externalId: 'g-cabide', title: 'Kit de cabides organizados', description: 'Pra roupa parar de empilhar na cadeira "provisória" que nunca esvazia.', iconName: 'Shirt', priceCents: 7000, tag: null },
   { externalId: 'g-espelho-quarto', title: 'Espelho de corpo inteiro', description: 'Pra conferir o look antes de sair pra cada nova aventura a dois.', iconName: 'Home', priceCents: 16000, tag: null },
   { externalId: 'g-tapete-quarto', title: 'Tapete felpudo de pé descalço', description: 'O primeiro passo do dia merece ser macio.', iconName: 'Home', priceCents: 9000, tag: null },
+  { externalId: 'g-organizador-guarda-roupa', title: 'Organizador de guarda-roupa a vácuo', description: 'Pra roupa de inverno sumir no armário sem tomar o espaço todo até o próximo frio.', iconName: 'Home', priceCents: 6000, tag: null },
 
   // Sala
   { externalId: 'g-sofa-cota', title: 'Sofá-cantinho de séries', description: 'Uma pequena cota pro sofá onde vão maratonar tudo juntos nos próximos 10 anos.', iconName: 'Sofa', priceCents: 35000, tag: 'Mais escolhido' },
@@ -74,6 +77,8 @@ const GIFTS_SEED = [
   { externalId: 'g-tapete-sala', title: 'Tapete que amarra a sala', description: 'Aquele detalhe que faz tudo parecer que sempre esteve no lugar certo.', iconName: 'Home', priceCents: 14000, tag: null },
   { externalId: 'g-relogio-parede', title: 'Relógio de parede do tempo a dois', description: 'Pra marcar cada hora boa dessa nova fase.', iconName: 'Home', priceCents: 8000, tag: null },
   { externalId: 'g-difusor-aromas', title: 'Difusor de aromas da casa nova', description: 'Um cheirinho gostoso pairando no ar todos os dias.', iconName: 'Flame', priceCents: 9000, tag: null },
+  { externalId: 'g-luzinha-pisca', title: 'Cordão de luzinha pra sala com cara de Pinterest', description: 'Aquele efeito "morei fora" que na real é só 20 minutos pendurando fiozinho.', iconName: 'Sparkles', priceCents: 5000, tag: null },
+  { externalId: 'g-kit-vinho', title: 'Kit taças e acessórios pra noite de vinho em casa', description: 'Pra sentir clima de vinícola chique sem sair do sofá.', iconName: 'Wine', priceCents: 11000, tag: null },
 
   // Experiências / lua de mel
   { externalId: 'g-lua', title: 'Lanternas na lua de mel', description: 'Ajude os noivos a soltarem lanternas sob o céu da nossa primeira viagem a dois.', iconName: 'Flame', priceCents: 15000, tag: 'Mágico' },
@@ -82,6 +87,8 @@ const GIFTS_SEED = [
   { externalId: 'g-cafe', title: 'Café da manhã real', description: 'Manhãs preguiçosas e doces para o início de cada novo capítulo.', iconName: 'Coffee', priceCents: 9000, tag: null },
   { externalId: 'g-upgrade', title: 'Upgrade mágico da lua de mel', description: 'Um toque extra de encanto para tornar a viagem ainda mais especial.', iconName: 'Sparkles', priceCents: 40000, tag: 'Real' },
   { externalId: 'g-castelo', title: 'Tijolinhos do novo castelo', description: 'Uma contribuição para o nosso novo lar — o castelo onde viveremos felizes.', iconName: 'Castle', priceCents: 12000, tag: null },
+  { externalId: 'g-passeio-barco', title: 'Passeio de barco ao pôr do sol', description: 'Aquela foto de casal com o sol se pondo atrás — o cartão postal da viagem.', iconName: 'Compass', priceCents: 18000, tag: null },
+  { externalId: 'g-piquenique-praia', title: 'Piquenique na praia da lua de mel', description: 'Areia, mar e um vinho gelado — o dia mais "resenha" da viagem toda.', iconName: 'Coffee', priceCents: 11000, tag: null },
 
   // Diversão / toque cômico
   { externalId: 'g-moletom-duplo', title: 'Moletom duplo de domingo preguiçoso', description: 'Um par igual pra assistir filme grudadinhos no sofá, sem vergonha nenhuma.', iconName: 'Sofa', priceCents: 13000, tag: null },
@@ -93,6 +100,10 @@ const GIFTS_SEED = [
   { externalId: 'g-camiseta-casal', title: 'Camiseta engraçada "Time da Bagunça"', description: 'Pra usar em casa nos dias em que a arrumação perde feio.', iconName: 'Shirt', priceCents: 7000, tag: null },
   { externalId: 'g-caneca-casal', title: 'Par de canecas combinando', description: 'Café da manhã com a cara dos dois, todo santo dia.', iconName: 'Coffee', priceCents: 4000, tag: null },
   { externalId: 'g-jogo-cartas', title: 'Baralho e jogos de carta pra noite de sofá', description: 'Pra quando o Wi-Fi cair e o amor precisar se virar sem tela.', iconName: 'Dice5', priceCents: 5000, tag: null },
+  { externalId: 'g-fone-bluetooth', title: 'Fone sem fio de ouvir podcast fingindo que trabalha', description: 'Ou pra fugir do barulho da obra do vizinho, o que vier primeiro.', iconName: 'Music', priceCents: 15000, tag: null },
+  { externalId: 'g-streaming', title: 'Assinatura de streaming pra maratona sem fim', description: '"Só mais um episódio" e de repente já é 2h da manhã.', iconName: 'Tv', priceCents: 6000, tag: null },
+  { externalId: 'g-fundo-emergencia', title: 'Fundo de emergência que sempre estoura no fim do mês', description: 'Pra quando a geladeira decide pifar bem na semana que "tava tudo controlado".', iconName: 'PiggyBank', priceCents: 5000, tag: null },
+  { externalId: 'g-churrasco-fds', title: 'Kit churrasco de fim de semana', description: 'Carvão, espeto e aquela desculpa perfeita pra chamar todo mundo lá em casa.', iconName: 'Flame', priceCents: 20000, tag: null },
 
   // Eletros grandes (cota)
   { externalId: 'g-microondas', title: 'Micro-ondas dos aquece-rápido', description: 'Pra esquentar o prato do dia anterior sem perder a paciência (nem o prato).', iconName: 'Microwave', priceCents: 32000, tag: null },
