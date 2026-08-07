@@ -8,6 +8,9 @@ DB_PASS=$(openssl rand -base64 24 | tr -d '/+=' | head -c 32)
 docker exec postgres-vector psql -U postgres -c "CREATE USER casamento WITH PASSWORD '${DB_PASS}';" 2>/dev/null || true
 docker exec postgres-vector psql -U postgres -c "CREATE DATABASE casamento OWNER casamento;" 2>/dev/null || true
 docker exec postgres-vector psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE casamento TO casamento;" 2>/dev/null || true
+docker exec postgres-vector psql -U postgres -d casamento -c "GRANT ALL ON SCHEMA public TO casamento;" 2>/dev/null || true
+docker exec postgres-vector psql -U postgres -d casamento -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO casamento;" 2>/dev/null || true
+docker exec postgres-vector psql -U postgres -d casamento -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO casamento;" 2>/dev/null || true
 
 if [ ! -f /apps/casamento.backend/.env ]; then
   JWT_SECRET=$(openssl rand -base64 48 | tr -d '/+=' | head -c 48)

@@ -53,38 +53,28 @@ export class GuestsService {
   }
 
   async stats() {
-    const [groups, members, respondedGroups, inviteSentGroups, partyInvitedGroups] =
-      await Promise.all([
-        this.prisma.guestGroup.findMany({
-          select: {
-            id: true,
-            side: true,
-            inviteSent: true,
-            invitedToParty: true,
-            rsvpResponse: { select: { partyAttending: true } },
-            members: { select: { attending: true } },
-            _count: { select: { members: true } },
-          },
-        }),
-        this.prisma.guestMember.findMany({
-          select: { attending: true },
-        }),
-        this.prisma.rsvpResponse.count(),
-        this.prisma.guestGroup.count({ where: { inviteSent: true } }),
-        this.prisma.guestGroup.count({ where: { invitedToParty: true } }),
-      ]);
+    const [groups, respondedGroups, inviteSentGroups, partyInvitedGroups] = await Promise.all([
+      this.prisma.guestGroup.findMany({
+        select: {
+          id: true,
+          side: true,
+          inviteSent: true,
+          invitedToParty: true,
+          rsvpResponse: { select: { partyAttending: true } },
+          members: { select: { attending: true } },
+          _count: { select: { members: true } },
+        },
+      }),
+      this.prisma.rsvpResponse.count(),
+      this.prisma.guestGroup.count({ where: { inviteSent: true } }),
+      this.prisma.guestGroup.count({ where: { invitedToParty: true } }),
+    ]);
 
     const totalGroups = groups.length;
-    const totalMembers = members.length;
-
+    let totalMembers = 0;
     let attending = 0;
     let notAttending = 0;
     let pendingAttendance = 0;
-    for (const member of members) {
-      if (member.attending === true) attending += 1;
-      else if (member.attending === false) notAttending += 1;
-      else pendingAttendance += 1;
-    }
 
     const bySide: Record<GuestSide, ReturnType<typeof emptySideStats>> = {
       [GuestSide.GROOM]: emptySideStats(),
@@ -97,10 +87,19 @@ export class GuestsService {
       sideStats.groups += 1;
       sideStats.members += group._count.members;
       if (group.rsvpResponse) sideStats.responded += 1;
+
+      totalMembers += group.members.length;
       for (const member of group.members) {
-        if (member.attending === true) sideStats.attending += 1;
-        else if (member.attending === false) sideStats.notAttending += 1;
-        else sideStats.pending += 1;
+        if (member.attending === true) {
+          attending += 1;
+          sideStats.attending += 1;
+        } else if (member.attending === false) {
+          notAttending += 1;
+          sideStats.notAttending += 1;
+        } else {
+          pendingAttendance += 1;
+          sideStats.pending += 1;
+        }
       }
     }
 
