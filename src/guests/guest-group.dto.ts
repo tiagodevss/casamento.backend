@@ -2,12 +2,14 @@ import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
+  IsEnum,
   IsOptional,
   IsString,
   MinLength,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { GuestSide } from '@prisma/client';
 
 export class GuestMemberInputDto {
   @IsOptional()
@@ -34,6 +36,13 @@ export class CreateGuestGroupDto {
   @ValidateNested({ each: true })
   @Type(() => GuestMemberInputDto)
   members!: GuestMemberInputDto[];
+
+  @IsEnum(GuestSide)
+  side!: GuestSide;
+
+  @IsOptional()
+  @IsBoolean()
+  inviteSent?: boolean;
 
   @IsOptional()
   @IsBoolean()
@@ -65,6 +74,14 @@ export class UpdateGuestGroupDto {
   @ValidateNested({ each: true })
   @Type(() => GuestMemberInputDto)
   members?: GuestMemberInputDto[];
+
+  @IsOptional()
+  @IsEnum(GuestSide)
+  side?: GuestSide;
+
+  @IsOptional()
+  @IsBoolean()
+  inviteSent?: boolean;
 
   @IsOptional()
   @IsBoolean()

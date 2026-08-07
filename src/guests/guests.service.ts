@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { GuestSide, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { normalizeName } from '../common/normalize-name';
 import { CreateGuestGroupDto, GuestMemberInputDto, UpdateGuestGroupDto } from './guest-group.dto';
@@ -31,6 +32,15 @@ function buildSearchNames(
   ]);
 }
 
+const emptySideStats = () => ({
+  groups: 0,
+  members: 0,
+  attending: 0,
+  notAttending: 0,
+  pending: 0,
+  responded: 0,
+});
+
 @Injectable()
 export class GuestsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -40,6 +50,92 @@ export class GuestsService {
       include: membersInclude,
       orderBy: { displayName: 'asc' },
     });
+  }
+
+  async stats() {
+    const [groups, members, respondedGroups, inviteSentGroups, partyInvitedGroups] =
+      await Promise.all([
+        this.prisma.guestGroup.findMany({
+          select: {
+            id: true,
+            side: true,
+            inviteSent: true,
+            invitedToParty: true,
+            rsvpResponse: { select: { partyAttending: true } },
+            members: { select: { attending: true } },
+            _count: { select: { members: true } },
+          },
+        }),
+        this.prisma.guestMember.findMany({
+          select: { attending: true },
+        }),
+        this.prisma.rsvpResponse.count(),
+        this.prisma.guestGroup.count({ where: { inviteSent: true } }),
+        this.prisma.guestGroup.count({ where: { invitedToParty: true } }),
+      ]);
+
+    const totalGroups = groups.length;
+    const totalMembers = members.length;
+
+    let attending = 0;
+    let notAttending = 0;
+    let pendingAttendance = 0;
+    for (const member of members) {
+      if (member.attending === true) attending += 1;
+      else if (member.attending === false) notAttending += 1;
+      else pendingAttendance += 1;
+    }
+
+    const bySide: Record<GuestSide, ReturnType<typeof emptySideStats>> = {
+      [GuestSide.GROOM]: emptySideStats(),
+      [GuestSide.BRIDE]: emptySideStats(),
+      [GuestSide.BOTH]: emptySideStats(),
+    };
+
+    for (const group of groups) {
+      const sideStats = bySide[group.side];
+      sideStats.groups += 1;
+      sideStats.members += group._count.members;
+      if (group.rsvpResponse) sideStats.responded += 1;
+      for (const member of group.members) {
+        if (member.attending === true) sideStats.attending += 1;
+        else if (member.attending === false) sideStats.notAttending += 1;
+        else sideStats.pending += 1;
+      }
+    }
+
+    let partyAttending = 0;
+    let partyNotAttending = 0;
+    let partyPending = 0;
+    for (const group of groups) {
+      if (!group.invitedToParty) continue;
+      if (group.rsvpResponse?.partyAttending === true) partyAttending += 1;
+      else if (group.rsvpResponse?.partyAttending === false) partyNotAttending += 1;
+      else partyPending += 1;
+    }
+
+    return {
+      groups: {
+        total: totalGroups,
+        inviteSent: inviteSentGroups,
+        inviteNotSent: totalGroups - inviteSentGroups,
+        responded: respondedGroups,
+        pendingResponse: totalGroups - respondedGroups,
+      },
+      members: {
+        total: totalMembers,
+        attending,
+        notAttending,
+        pending: pendingAttendance,
+      },
+      bySide,
+      party: {
+        invited: partyInvitedGroups,
+        attending: partyAttending,
+        notAttending: partyNotAttending,
+        pending: partyPending,
+      },
+    };
   }
 
   async get(id: string) {
@@ -62,6 +158,8 @@ export class GuestsService {
     return this.prisma.guestGroup.create({
       data: {
         displayName: dto.displayName.trim(),
+        side: dto.side,
+        inviteSent: dto.inviteSent ?? false,
         invitedToParty: dto.invitedToParty ?? false,
         phone: dto.phone,
         notes: dto.notes,
@@ -79,6 +177,11 @@ export class GuestsService {
 
   async update(id: string, dto: UpdateGuestGroupDto) {
     const existing = await this.get(id);
+
+    const sideData: Prisma.GuestGroupUpdateInput = {
+      side: dto.side,
+      inviteSent: dto.inviteSent,
+    };
 
     if (dto.members) {
       const cleaned = dto.members.map((member) => ({
@@ -132,6 +235,7 @@ export class GuestsService {
             invitedToParty: dto.invitedToParty,
             phone: dto.phone,
             notes: dto.notes,
+            ...sideData,
             searchNames: buildSearchNames(
               displayName,
               aliasOnly ??
@@ -159,6 +263,7 @@ export class GuestsService {
         invitedToParty: dto.invitedToParty,
         phone: dto.phone,
         notes: dto.notes,
+        ...sideData,
         searchNames:
           dto.searchNames !== undefined || dto.displayName !== undefined
             ? buildSearchNames(

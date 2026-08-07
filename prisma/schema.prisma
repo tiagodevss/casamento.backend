@@ -15,10 +15,18 @@ model Admin {
   createdAt    DateTime @default(now())
 }
 
+enum GuestSide {
+  GROOM
+  BRIDE
+  BOTH
+}
+
 model GuestGroup {
   id             String        @id @default(uuid())
   displayName    String
   searchNames    String[]
+  side           GuestSide     @default(BOTH)
+  inviteSent     Boolean       @default(false)
   invitedToParty Boolean       @default(false)
   phone          String?
   notes          String?
@@ -26,6 +34,9 @@ model GuestGroup {
   updatedAt      DateTime      @updatedAt
   members        GuestMember[]
   rsvpResponse   RsvpResponse?
+
+  @@index([side])
+  @@index([inviteSent])
 }
 
 model GuestMember {

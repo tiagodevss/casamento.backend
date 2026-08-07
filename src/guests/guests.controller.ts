@@ -13,6 +13,11 @@ export class GuestsController {
     return this.guests.list();
   }
 
+  @Get('stats')
+  stats() {
+    return this.guests.stats();
+  }
+
   @Get(':id')
   get(@Param('id') id: string) {
     return this.guests.get(id);
