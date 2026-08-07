@@ -44,6 +44,7 @@ model GuestMember {
   guestGroup   GuestGroup @relation(fields: [guestGroupId], references: [id], onDelete: Cascade)
   guestGroupId String
   name         String
+  isChild      Boolean    @default(false)
   attending    Boolean?
   sortOrder    Int        @default(0)
   createdAt    DateTime   @default(now())

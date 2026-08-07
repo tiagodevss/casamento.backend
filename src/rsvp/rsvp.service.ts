@@ -68,6 +68,7 @@ export class RsvpService {
       members: group.members.map((member) => ({
         id: member.id,
         name: member.name,
+        isChild: member.isChild,
         attending: member.attending,
       })),
     };

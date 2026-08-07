@@ -19,6 +19,10 @@ export class GuestMemberInputDto {
   @IsString()
   @MinLength(2)
   name!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isChild?: boolean;
 }
 
 export class CreateGuestGroupDto {

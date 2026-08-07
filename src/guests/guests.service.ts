@@ -17,11 +17,12 @@ function resolveMembers(
     .map((member) => ({
       ...(member.id ? { id: member.id } : {}),
       name: member.name.trim(),
+      isChild: Boolean(member.isChild),
     }))
     .filter((member) => member.name);
 
   if (cleaned.length === 0) {
-    return [{ name: displayName.trim() }];
+    return [{ name: displayName.trim(), isChild: false }];
   }
 
   return cleaned;
@@ -183,6 +184,7 @@ export class GuestsService {
         members: {
           create: members.map((member, index) => ({
             name: member.name,
+            isChild: member.isChild ?? false,
             sortOrder: index,
           })),
         },
@@ -225,13 +227,18 @@ export class GuestsService {
           if (member.id && existingMembers.some((item) => item.id === member.id)) {
             await tx.guestMember.update({
               where: { id: member.id },
-              data: { name: member.name, sortOrder: index },
+              data: {
+                name: member.name,
+                isChild: member.isChild ?? false,
+                sortOrder: index,
+              },
             });
           } else {
             await tx.guestMember.create({
               data: {
                 guestGroupId: id,
                 name: member.name,
+                isChild: member.isChild ?? false,
                 sortOrder: index,
               },
             });
