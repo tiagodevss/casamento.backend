@@ -8,6 +8,10 @@ export const DEFAULT_INVITE_MESSAGE_TEMPLATE = `Olá, {{nome}}! 💛
 Vocês estão convidados para o nosso casamento.
 Confirmem a presença por aqui: {{link}}`;
 
+export const DEFAULT_INVITE_MESSAGE_TEMPLATE_SINGLE = `Olá, {{nome}}! 💛
+Você está convidado para o nosso casamento.
+Confirme a presença por aqui: {{link}}`;
+
 @Injectable()
 export class SettingsService {
   constructor(private readonly prisma: PrismaService) {}

@@ -32,7 +32,7 @@ export class CreateGuestGroupDto {
   searchNames?: string[];
 
   @IsArray()
-  @ArrayMinSize(1)
+  @ArrayMinSize(0)
   @ValidateNested({ each: true })
   @Type(() => GuestMemberInputDto)
   members!: GuestMemberInputDto[];
@@ -70,7 +70,7 @@ export class UpdateGuestGroupDto {
 
   @IsOptional()
   @IsArray()
-  @ArrayMinSize(1)
+  @ArrayMinSize(0)
   @ValidateNested({ each: true })
   @Type(() => GuestMemberInputDto)
   members?: GuestMemberInputDto[];

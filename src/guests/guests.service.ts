@@ -9,6 +9,24 @@ const membersInclude = {
   rsvpResponse: true,
 };
 
+function resolveMembers(
+  displayName: string,
+  members: GuestMemberInputDto[] | undefined,
+): GuestMemberInputDto[] {
+  const cleaned = (members ?? [])
+    .map((member) => ({
+      ...(member.id ? { id: member.id } : {}),
+      name: member.name.trim(),
+    }))
+    .filter((member) => member.name);
+
+  if (cleaned.length === 0) {
+    return [{ name: displayName.trim() }];
+  }
+
+  return cleaned;
+}
+
 function uniqueNames(names: string[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -147,22 +165,21 @@ export class GuestsService {
   }
 
   create(dto: CreateGuestGroupDto) {
-    const members = dto.members.map((member) => ({
-      name: member.name.trim(),
-    }));
+    const displayName = dto.displayName.trim();
+    const members = resolveMembers(displayName, dto.members);
     if (members.some((member) => member.name.length < 2)) {
       throw new BadRequestException('Cada pessoa precisa de um nome válido');
     }
 
     return this.prisma.guestGroup.create({
       data: {
-        displayName: dto.displayName.trim(),
+        displayName,
         side: dto.side,
         inviteSent: dto.inviteSent ?? false,
         invitedToParty: dto.invitedToParty ?? false,
         phone: dto.phone,
         notes: dto.notes,
-        searchNames: buildSearchNames(dto.displayName, dto.searchNames, dto.members),
+        searchNames: buildSearchNames(displayName, dto.searchNames, members),
         members: {
           create: members.map((member, index) => ({
             name: member.name,
@@ -183,18 +200,12 @@ export class GuestsService {
     };
 
     if (dto.members) {
-      const cleaned = dto.members.map((member) => ({
-        id: member.id,
-        name: member.name.trim(),
-      }));
+      const displayName = dto.displayName?.trim() ?? existing.displayName;
+      const cleaned = resolveMembers(displayName, dto.members);
       if (cleaned.some((member) => member.name.length < 2)) {
         throw new BadRequestException('Cada pessoa precisa de um nome válido');
       }
-      if (cleaned.length < 1) {
-        throw new BadRequestException('O convite precisa de ao menos uma pessoa');
-      }
 
-      const displayName = dto.displayName?.trim() ?? existing.displayName;
       const aliases = dto.searchNames ?? existing.searchNames;
       // Prefer explicit aliases from the request; member names are always merged in.
       const aliasOnly = dto.searchNames !== undefined ? dto.searchNames : undefined;
