@@ -16,28 +16,41 @@ model Admin {
 }
 
 model GuestGroup {
-  id            String        @id @default(uuid())
-  displayName   String
-  searchNames   String[]
-  invitedToParty Boolean      @default(false)
-  phone         String?
-  notes         String?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  rsvpResponse  RsvpResponse?
+  id             String        @id @default(uuid())
+  displayName    String
+  searchNames    String[]
+  invitedToParty Boolean       @default(false)
+  phone          String?
+  notes          String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  members        GuestMember[]
+  rsvpResponse   RsvpResponse?
+}
+
+model GuestMember {
+  id           String     @id @default(uuid())
+  guestGroup   GuestGroup @relation(fields: [guestGroupId], references: [id], onDelete: Cascade)
+  guestGroupId String
+  name         String
+  attending    Boolean?
+  sortOrder    Int        @default(0)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([guestGroupId])
 }
 
 model RsvpResponse {
-  id              String     @id @default(uuid())
-  guestGroup      GuestGroup @relation(fields: [guestGroupId], references: [id])
-  guestGroupId    String     @unique
-  attending       Boolean
-  partyAttending  Boolean?
-  diet            String?
-  message         String?
-  respondedIp     String?
-  respondedAt     DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  id             String     @id @default(uuid())
+  guestGroup     GuestGroup @relation(fields: [guestGroupId], references: [id], onDelete: Cascade)
+  guestGroupId   String     @unique
+  partyAttending Boolean?
+  diet           String?
+  message        String?
+  respondedIp    String?
+  respondedAt    DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 }
 
 model Gift {
@@ -106,4 +119,12 @@ model WebhookEvent {
   payload         Json
   receivedAt      DateTime  @default(now())
   processedAt     DateTime?
+}
+
+model AppSetting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

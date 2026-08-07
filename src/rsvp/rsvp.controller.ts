@@ -14,6 +14,12 @@ export class RsvpController {
     return this.rsvp.search(query);
   }
 
+  @Get(':guestGroupId')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  getInvite(@Param('guestGroupId') guestGroupId: string) {
+    return this.rsvp.getInvite(guestGroupId);
+  }
+
   @Post(':guestGroupId/confirm')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   confirm(

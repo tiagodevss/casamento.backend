@@ -1,14 +1,39 @@
-import { ArrayMinSize, IsArray, IsBoolean, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  ArrayMinSize,
+  IsArray,
+  IsBoolean,
+  IsOptional,
+  IsString,
+  MinLength,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class GuestMemberInputDto {
+  @IsOptional()
+  @IsString()
+  id?: string;
+
+  @IsString()
+  @MinLength(2)
+  name!: string;
+}
 
 export class CreateGuestGroupDto {
   @IsString()
   @MinLength(2)
   displayName!: string;
 
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  searchNames?: string[];
+
   @IsArray()
   @ArrayMinSize(1)
-  @IsString({ each: true })
-  searchNames!: string[];
+  @ValidateNested({ each: true })
+  @Type(() => GuestMemberInputDto)
+  members!: GuestMemberInputDto[];
 
   @IsOptional()
   @IsBoolean()
@@ -31,9 +56,15 @@ export class UpdateGuestGroupDto {
 
   @IsOptional()
   @IsArray()
-  @ArrayMinSize(1)
   @IsString({ each: true })
   searchNames?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => GuestMemberInputDto)
+  members?: GuestMemberInputDto[];
 
   @IsOptional()
   @IsBoolean()
