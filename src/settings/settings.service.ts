@@ -4,7 +4,8 @@ import { UpdateSettingsDto } from './update-settings.dto';
 
 export const INVITE_MESSAGE_TEMPLATE_KEY = 'invite_message_template';
 
-export const DEFAULT_INVITE_MESSAGE_TEMPLATE = `Queridos {{nome}},🤍
+export const DEFAULT_INVITE_MESSAGE_TEMPLATE = `Querido(a) convidado,🤍
+{{nome}}
 
 Nosso grande dia está cada vez mais próximo, e estamos muito felizes por poder compartilhar esse momento tão especial com vocês.
 
@@ -17,7 +18,8 @@ Pedimos, com carinho, que realizem a confirmação para nos ajudar na organizaç
 
 Será uma alegria imensa celebrar esse momento ao lado de pessoas tão especiais. Esperamos por vocês! 🤍`;
 
-export const DEFAULT_INVITE_MESSAGE_TEMPLATE_SINGLE = `Querido(a) {{nome}},🤍
+export const DEFAULT_INVITE_MESSAGE_TEMPLATE_SINGLE = `Querido(a) convidado,🤍
+{{nome}}
 
 Nosso grande dia está cada vez mais próximo, e estamos muito felizes por poder compartilhar esse momento tão especial com você.
 
