@@ -72,22 +72,29 @@ export class GuestsService {
   }
 
   async stats() {
-    const [groups, respondedGroups, inviteSentGroups, partyInvitedGroups] = await Promise.all([
-      this.prisma.guestGroup.findMany({
-        select: {
-          id: true,
-          side: true,
-          inviteSent: true,
-          invitedToParty: true,
-          rsvpResponse: { select: { partyAttending: true } },
-          members: { select: { attending: true } },
-          _count: { select: { members: true } },
-        },
-      }),
-      this.prisma.rsvpResponse.count(),
-      this.prisma.guestGroup.count({ where: { inviteSent: true } }),
-      this.prisma.guestGroup.count({ where: { invitedToParty: true } }),
-    ]);
+    const [groups, respondedGroups, inviteSentGroups, partyInvitedGroups, messageCount, dietCount] =
+      await Promise.all([
+        this.prisma.guestGroup.findMany({
+          select: {
+            id: true,
+            side: true,
+            inviteSent: true,
+            invitedToParty: true,
+            rsvpResponse: { select: { partyAttending: true } },
+            members: { select: { attending: true } },
+            _count: { select: { members: true } },
+          },
+        }),
+        this.prisma.rsvpResponse.count(),
+        this.prisma.guestGroup.count({ where: { inviteSent: true } }),
+        this.prisma.guestGroup.count({ where: { invitedToParty: true } }),
+        this.prisma.rsvpResponse.count({
+          where: { message: { not: null }, NOT: { message: '' } },
+        }),
+        this.prisma.rsvpResponse.count({
+          where: { diet: { not: null }, NOT: { diet: '' } },
+        }),
+      ]);
 
     const totalGroups = groups.length;
     let totalMembers = 0;
@@ -153,6 +160,8 @@ export class GuestsService {
         notAttending: partyNotAttending,
         pending: partyPending,
       },
+      messages: { withText: messageCount },
+      diets: { withText: dietCount },
     };
   }
 
@@ -193,59 +202,140 @@ export class GuestsService {
     });
   }
 
+  private normalizeRsvpText(value: string | null | undefined): string | null {
+    if (value == null) return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private async upsertRsvpTextFields(
+    id: string,
+    dto: Pick<UpdateGuestGroupDto, 'message' | 'diet'>,
+  ) {
+    if (dto.message === undefined && dto.diet === undefined) return;
+
+    const data: Prisma.RsvpResponseUpdateInput = {};
+    const create: Prisma.RsvpResponseUncheckedCreateInput = { guestGroupId: id };
+
+    if (dto.message !== undefined) {
+      const message = this.normalizeRsvpText(dto.message);
+      data.message = message;
+      create.message = message;
+    }
+    if (dto.diet !== undefined) {
+      const diet = this.normalizeRsvpText(dto.diet);
+      data.diet = diet;
+      create.diet = diet;
+    }
+
+    const existing = await this.prisma.rsvpResponse.findUnique({
+      where: { guestGroupId: id },
+      select: { id: true },
+    });
+
+    if (!existing) {
+      const hasText = Boolean(create.message || create.diet);
+      if (!hasText) return;
+      await this.prisma.rsvpResponse.create({ data: create });
+      return;
+    }
+
+    await this.prisma.rsvpResponse.update({
+      where: { guestGroupId: id },
+      data,
+    });
+  }
+
   async update(id: string, dto: UpdateGuestGroupDto) {
     const existing = await this.get(id);
 
-    const sideData: Prisma.GuestGroupUpdateInput = {
-      side: dto.side,
-      inviteSent: dto.inviteSent,
-    };
+    const touchesGroupFields =
+      dto.displayName !== undefined ||
+      dto.searchNames !== undefined ||
+      dto.members !== undefined ||
+      dto.side !== undefined ||
+      dto.inviteSent !== undefined ||
+      dto.invitedToParty !== undefined ||
+      dto.phone !== undefined ||
+      dto.notes !== undefined;
 
-    if (dto.members) {
-      const displayName = dto.displayName?.trim() ?? existing.displayName;
-      const cleaned = resolveMembers(displayName, dto.members);
-      if (cleaned.some((member) => member.name.length < 2)) {
-        throw new BadRequestException('Cada pessoa precisa de um nome válido');
-      }
+    if (touchesGroupFields) {
+      const sideData: Prisma.GuestGroupUpdateInput = {
+        side: dto.side,
+        inviteSent: dto.inviteSent,
+      };
 
-      const aliases = dto.searchNames ?? existing.searchNames;
-      // Prefer explicit aliases from the request; member names are always merged in.
-      const aliasOnly = dto.searchNames !== undefined ? dto.searchNames : undefined;
-
-      return this.prisma.$transaction(async (tx) => {
-        const existingMembers = await tx.guestMember.findMany({ where: { guestGroupId: id } });
-        const incomingIds = new Set(cleaned.map((member) => member.id).filter(Boolean) as string[]);
-        const toDelete = existingMembers.filter((member) => !incomingIds.has(member.id));
-
-        if (toDelete.length > 0) {
-          await tx.guestMember.deleteMany({
-            where: { id: { in: toDelete.map((member) => member.id) } },
-          });
+      if (dto.members) {
+        const displayName = dto.displayName?.trim() ?? existing.displayName;
+        const cleaned = resolveMembers(displayName, dto.members);
+        if (cleaned.some((member) => member.name.length < 2)) {
+          throw new BadRequestException('Cada pessoa precisa de um nome válido');
         }
 
-        for (const [index, member] of cleaned.entries()) {
-          if (member.id && existingMembers.some((item) => item.id === member.id)) {
-            await tx.guestMember.update({
-              where: { id: member.id },
-              data: {
-                name: member.name,
-                isChild: member.isChild ?? false,
-                sortOrder: index,
-              },
-            });
-          } else {
-            await tx.guestMember.create({
-              data: {
-                guestGroupId: id,
-                name: member.name,
-                isChild: member.isChild ?? false,
-                sortOrder: index,
-              },
+        const aliases = dto.searchNames ?? existing.searchNames;
+        // Prefer explicit aliases from the request; member names are always merged in.
+        const aliasOnly = dto.searchNames !== undefined ? dto.searchNames : undefined;
+
+        await this.prisma.$transaction(async (tx) => {
+          const existingMembers = await tx.guestMember.findMany({ where: { guestGroupId: id } });
+          const incomingIds = new Set(cleaned.map((member) => member.id).filter(Boolean) as string[]);
+          const toDelete = existingMembers.filter((member) => !incomingIds.has(member.id));
+
+          if (toDelete.length > 0) {
+            await tx.guestMember.deleteMany({
+              where: { id: { in: toDelete.map((member) => member.id) } },
             });
           }
-        }
 
-        return tx.guestGroup.update({
+          for (const [index, member] of cleaned.entries()) {
+            if (member.id && existingMembers.some((item) => item.id === member.id)) {
+              await tx.guestMember.update({
+                where: { id: member.id },
+                data: {
+                  name: member.name,
+                  isChild: member.isChild ?? false,
+                  sortOrder: index,
+                },
+              });
+            } else {
+              await tx.guestMember.create({
+                data: {
+                  guestGroupId: id,
+                  name: member.name,
+                  isChild: member.isChild ?? false,
+                  sortOrder: index,
+                },
+              });
+            }
+          }
+
+          await tx.guestGroup.update({
+            where: { id },
+            data: {
+              displayName: dto.displayName?.trim(),
+              invitedToParty: dto.invitedToParty,
+              phone: dto.phone,
+              notes: dto.notes,
+              ...sideData,
+              searchNames: buildSearchNames(
+                displayName,
+                aliasOnly ??
+                  // Keep only aliases that are not auto-derived from previous members/displayName
+                  aliases.filter((name) => {
+                    const derived = new Set([
+                      normalizeName(existing.displayName),
+                      ...existing.members.map((member) => normalizeName(member.name)),
+                    ]);
+                    return !derived.has(name);
+                  }),
+                cleaned,
+              ),
+            },
+          });
+        });
+      } else {
+        const displayName = dto.displayName?.trim() ?? existing.displayName;
+        await this.prisma.guestGroup.update({
           where: { id },
           data: {
             displayName: dto.displayName?.trim(),
@@ -253,52 +343,28 @@ export class GuestsService {
             phone: dto.phone,
             notes: dto.notes,
             ...sideData,
-            searchNames: buildSearchNames(
-              displayName,
-              aliasOnly ??
-                // Keep only aliases that are not auto-derived from previous members/displayName
-                aliases.filter((name) => {
-                  const derived = new Set([
-                    normalizeName(existing.displayName),
-                    ...existing.members.map((member) => normalizeName(member.name)),
-                  ]);
-                  return !derived.has(name);
-                }),
-              cleaned,
-            ),
+            searchNames:
+              dto.searchNames !== undefined || dto.displayName !== undefined
+                ? buildSearchNames(
+                    displayName,
+                    dto.searchNames ??
+                      existing.searchNames.filter((name) => {
+                        const derived = new Set([
+                          normalizeName(existing.displayName),
+                          ...existing.members.map((member) => normalizeName(member.name)),
+                        ]);
+                        return !derived.has(name);
+                      }),
+                    existing.members,
+                  )
+                : undefined,
           },
-          include: membersInclude,
         });
-      });
+      }
     }
 
-    const displayName = dto.displayName?.trim() ?? existing.displayName;
-    return this.prisma.guestGroup.update({
-      where: { id },
-      data: {
-        displayName: dto.displayName?.trim(),
-        invitedToParty: dto.invitedToParty,
-        phone: dto.phone,
-        notes: dto.notes,
-        ...sideData,
-        searchNames:
-          dto.searchNames !== undefined || dto.displayName !== undefined
-            ? buildSearchNames(
-                displayName,
-                dto.searchNames ??
-                  existing.searchNames.filter((name) => {
-                    const derived = new Set([
-                      normalizeName(existing.displayName),
-                      ...existing.members.map((member) => normalizeName(member.name)),
-                    ]);
-                    return !derived.has(name);
-                  }),
-                existing.members,
-              )
-            : undefined,
-      },
-      include: membersInclude,
-    });
+    await this.upsertRsvpTextFields(id, dto);
+    return this.get(id);
   }
 
   async remove(id: string) {

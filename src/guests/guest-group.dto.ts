@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -98,4 +99,16 @@ export class UpdateGuestGroupDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  /** Empty string or null clears the RSVP message. */
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsString()
+  message?: string | null;
+
+  /** Empty string or null clears the dietary restriction. */
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsString()
+  diet?: string | null;
 }
