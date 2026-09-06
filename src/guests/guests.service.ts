@@ -102,7 +102,9 @@ export class GuestsService {
     let notAttending = 0;
     let pendingAttendance = 0;
     let ceremonyOnlyMembers = 0;
+    let ceremonyOnlyConfirmed = 0;
     let ceremonyAndPartyMembers = 0;
+    let ceremonyAndPartyConfirmed = 0;
 
     let partyAttending = 0;
     let partyNotAttending = 0;
@@ -138,6 +140,8 @@ export class GuestsService {
           respondedMembers += 1;
           sideStats.attending += 1;
           sideStats.responded += 1;
+
+          if (!group.invitedToParty) ceremonyOnlyConfirmed += 1;
         } else if (member.attending === false) {
           notAttending += 1;
           respondedMembers += 1;
@@ -158,6 +162,7 @@ export class GuestsService {
             group.rsvpResponse?.partyAttending === true
           ) {
             partyAttending += 1;
+            ceremonyAndPartyConfirmed += 1;
           } else {
             partyPending += 1;
           }
@@ -185,7 +190,9 @@ export class GuestsService {
         notAttending,
         pending: pendingAttendance,
         ceremonyOnly: ceremonyOnlyMembers,
+        ceremonyOnlyConfirmed,
         ceremonyAndParty: ceremonyAndPartyMembers,
+        ceremonyAndPartyConfirmed,
       },
       bySide,
       party: {
