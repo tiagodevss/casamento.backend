@@ -1,12 +1,17 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { JwtStrategyGuard } from '../auth/jwt-auth.guard';
+import { ConfirmRsvpDto } from '../rsvp/confirm-rsvp.dto';
+import { RsvpService } from '../rsvp/rsvp.service';
 import { GuestsService } from './guests.service';
 import { CreateGuestGroupDto, UpdateGuestGroupDto } from './guest-group.dto';
 
 @Controller('guests')
 @UseGuards(JwtStrategyGuard)
 export class GuestsController {
-  constructor(private readonly guests: GuestsService) {}
+  constructor(
+    private readonly guests: GuestsService,
+    private readonly rsvp: RsvpService,
+  ) {}
 
   @Get()
   list() {
@@ -26,6 +31,12 @@ export class GuestsController {
   @Post()
   create(@Body() dto: CreateGuestGroupDto) {
     return this.guests.create(dto);
+  }
+
+  @Patch(':id/rsvp')
+  async updateRsvp(@Param('id') id: string, @Body() dto: ConfirmRsvpDto) {
+    await this.rsvp.confirm(id, dto);
+    return this.guests.get(id);
   }
 
   @Patch(':id')
