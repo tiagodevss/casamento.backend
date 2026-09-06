@@ -72,35 +72,41 @@ export class GuestsService {
   }
 
   async stats() {
-    const [groups, respondedGroups, inviteSentGroups, partyInvitedGroups, messageCount, dietCount] =
-      await Promise.all([
-        this.prisma.guestGroup.findMany({
-          select: {
-            id: true,
-            side: true,
-            inviteSent: true,
-            invitedToParty: true,
-            rsvpResponse: { select: { partyAttending: true } },
-            members: { select: { attending: true } },
-            _count: { select: { members: true } },
-          },
-        }),
-        this.prisma.rsvpResponse.count(),
-        this.prisma.guestGroup.count({ where: { inviteSent: true } }),
-        this.prisma.guestGroup.count({ where: { invitedToParty: true } }),
-        this.prisma.rsvpResponse.count({
-          where: { message: { not: null }, NOT: { message: '' } },
-        }),
-        this.prisma.rsvpResponse.count({
-          where: { diet: { not: null }, NOT: { diet: '' } },
-        }),
-      ]);
+    const [groups, messageCount, dietCount] = await Promise.all([
+      this.prisma.guestGroup.findMany({
+        select: {
+          id: true,
+          side: true,
+          inviteSent: true,
+          invitedToParty: true,
+          rsvpResponse: { select: { partyAttending: true } },
+          members: { select: { attending: true } },
+        },
+      }),
+      this.prisma.rsvpResponse.count({
+        where: { message: { not: null }, NOT: { message: '' } },
+      }),
+      this.prisma.rsvpResponse.count({
+        where: { diet: { not: null }, NOT: { diet: '' } },
+      }),
+    ]);
 
     const totalGroups = groups.length;
+    let inviteSentGroups = 0;
+    let respondedGroups = 0;
+
     let totalMembers = 0;
+    let inviteSentMembers = 0;
+    let respondedMembers = 0;
     let attending = 0;
     let notAttending = 0;
     let pendingAttendance = 0;
+    let ceremonyOnlyMembers = 0;
+    let ceremonyAndPartyMembers = 0;
+
+    let partyAttending = 0;
+    let partyNotAttending = 0;
+    let partyPending = 0;
 
     const bySide: Record<GuestSide, ReturnType<typeof emptySideStats>> = {
       [GuestSide.GROOM]: emptySideStats(),
@@ -109,37 +115,58 @@ export class GuestsService {
     };
 
     for (const group of groups) {
+      const memberCount = group.members.length;
       const sideStats = bySide[group.side];
-      sideStats.groups += 1;
-      sideStats.members += group._count.members;
-      if (group.rsvpResponse) sideStats.responded += 1;
 
-      totalMembers += group.members.length;
+      sideStats.groups += 1;
+      sideStats.members += memberCount;
+      totalMembers += memberCount;
+
+      if (group.inviteSent) {
+        inviteSentGroups += 1;
+        inviteSentMembers += memberCount;
+      }
+
+      if (group.rsvpResponse) respondedGroups += 1;
+
+      if (group.invitedToParty) ceremonyAndPartyMembers += memberCount;
+      else ceremonyOnlyMembers += memberCount;
+
       for (const member of group.members) {
         if (member.attending === true) {
           attending += 1;
+          respondedMembers += 1;
           sideStats.attending += 1;
+          sideStats.responded += 1;
         } else if (member.attending === false) {
           notAttending += 1;
+          respondedMembers += 1;
           sideStats.notAttending += 1;
+          sideStats.responded += 1;
         } else {
           pendingAttendance += 1;
           sideStats.pending += 1;
         }
+
+        if (group.invitedToParty) {
+          // A resposta da festa é do grupo, mas os indicadores são por pessoa.
+          // Uma pessoa que não vai ao casamento nunca entra como confirmada na festa.
+          if (member.attending === false || group.rsvpResponse?.partyAttending === false) {
+            partyNotAttending += 1;
+          } else if (
+            member.attending === true &&
+            group.rsvpResponse?.partyAttending === true
+          ) {
+            partyAttending += 1;
+          } else {
+            partyPending += 1;
+          }
+        }
       }
     }
 
-    let partyAttending = 0;
-    let partyNotAttending = 0;
-    let partyPending = 0;
-    for (const group of groups) {
-      if (!group.invitedToParty) continue;
-      if (group.rsvpResponse?.partyAttending === true) partyAttending += 1;
-      else if (group.rsvpResponse?.partyAttending === false) partyNotAttending += 1;
-      else partyPending += 1;
-    }
-
     return {
+      // Mantemos estatísticas por convite para as ações operacionais de envio/filtro.
       groups: {
         total: totalGroups,
         inviteSent: inviteSentGroups,
@@ -147,15 +174,22 @@ export class GuestsService {
         responded: respondedGroups,
         pendingResponse: totalGroups - respondedGroups,
       },
+      // Indicadores visuais devem representar pessoas, inclusive em convites familiares.
       members: {
         total: totalMembers,
+        inviteSent: inviteSentMembers,
+        inviteNotSent: totalMembers - inviteSentMembers,
+        responded: respondedMembers,
+        pendingResponse: totalMembers - respondedMembers,
         attending,
         notAttending,
         pending: pendingAttendance,
+        ceremonyOnly: ceremonyOnlyMembers,
+        ceremonyAndParty: ceremonyAndPartyMembers,
       },
       bySide,
       party: {
-        invited: partyInvitedGroups,
+        invited: ceremonyAndPartyMembers,
         attending: partyAttending,
         notAttending: partyNotAttending,
         pending: partyPending,
