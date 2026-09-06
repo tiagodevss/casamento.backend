@@ -63,7 +63,9 @@ describe('GuestsService.stats', () => {
         notAttending: 1,
         pending: 1,
         ceremonyOnly: 1,
+        ceremonyOnlyConfirmed: 0,
         ceremonyAndParty: 6,
+        ceremonyAndPartyConfirmed: 3,
       },
       bySide: {
         [GuestSide.GROOM]: {
