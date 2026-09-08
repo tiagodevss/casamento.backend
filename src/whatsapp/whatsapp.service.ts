@@ -110,7 +110,7 @@ export class WhatsAppService {
     const ack = Number(data.ack ?? data.status ?? 0);
     if (!Number.isFinite(ack) || ack <= 0) return;
 
-    let status = CommunicationDeliveryStatus.SENT;
+    let status: CommunicationDeliveryStatus = CommunicationDeliveryStatus.SENT;
     const update: Record<string, any> = { status };
     if (ack >= 3) {
       status = CommunicationDeliveryStatus.READ;
