@@ -1,4 +1,7 @@
-import { CommunicationAudience } from '@prisma/client';
+import {
+  CommunicationAudience,
+  CommunicationCampaignStatus,
+} from '@prisma/client';
 import { CommunicationsService } from './communications.service';
 
 function group(overrides: Record<string, unknown> = {}) {
@@ -139,5 +142,92 @@ describe('CommunicationsService eligibility', () => {
       eligible: false,
       reason: 'NO_VALID_PHONE',
     });
+  });
+});
+
+describe('CommunicationsService campaign safety', () => {
+  it('persists the reviewed recipients as the delivery snapshot during preview', async () => {
+    const updatedAt = new Date('2026-09-08T12:00:00-03:00');
+    const campaignRecord = {
+      id: 'campaign-1',
+      status: CommunicationCampaignStatus.DRAFT,
+      updatedAt,
+      audience: CommunicationAudience.ALL,
+      includeGuestGroupIds: [],
+      requireInviteSent: true,
+      template: {
+        id: 'template-1',
+        key: 'INTRO',
+        active: true,
+        bodySingle: 'Oi {{nome}}',
+        bodyGroup: 'Oi {{nome}}',
+      },
+    };
+    const tx = {
+      communicationCampaign: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      communicationDelivery: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+    const prisma = {
+      communicationCampaign: {
+        findUnique: jest.fn().mockResolvedValue(campaignRecord),
+      },
+      guestGroup: {
+        findMany: jest.fn().mockResolvedValue([group()]),
+      },
+      $transaction: jest.fn(async (callback: any) => callback(tx)),
+    };
+    const config = { get: jest.fn((_key: string, fallback: string) => fallback) };
+    const service = new CommunicationsService(prisma as any, {} as any, config as any);
+
+    const preview = await service.preview('campaign-1');
+
+    expect(preview.invitationCount).toBe(1);
+    expect(tx.communicationDelivery.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          campaignId: 'campaign-1',
+          guestGroupId: 'group-1',
+          phone: '5519999999999',
+          renderedMessage: 'Oi Família Teste',
+        }),
+      ],
+    });
+  });
+
+  it('only completes an empty started campaign while it is still PROCESSING', async () => {
+    const updateMany = jest
+      .fn()
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+    const prisma = {
+      communicationCampaign: {
+        updateMany,
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'campaign-1',
+          template: { active: true },
+        }),
+      },
+      communicationDelivery: {
+        count: jest.fn().mockResolvedValue(0),
+      },
+    };
+    const service = new CommunicationsService(prisma as any, {} as any, {} as any);
+
+    await (service as any).startCampaign('campaign-1');
+
+    expect(updateMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: {
+          id: 'campaign-1',
+          status: CommunicationCampaignStatus.PROCESSING,
+        },
+      }),
+    );
   });
 });
