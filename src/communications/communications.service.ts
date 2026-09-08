@@ -210,7 +210,10 @@ export class CommunicationsService implements OnModuleInit {
   async cancel(id: string) {
     const campaign = await this.prisma.communicationCampaign.findUnique({ where: { id } });
     if (!campaign) throw new NotFoundException('Campanha não encontrada');
-    if ([CommunicationCampaignStatus.COMPLETED, CommunicationCampaignStatus.CANCELLED].includes(campaign.status)) {
+    if (
+      campaign.status === CommunicationCampaignStatus.COMPLETED ||
+      campaign.status === CommunicationCampaignStatus.CANCELLED
+    ) {
       return campaign;
     }
     await this.prisma.$transaction([
@@ -733,9 +736,8 @@ export class CommunicationsService implements OnModuleInit {
     const campaign = await this.prisma.communicationCampaign.findUnique({ where: { id } });
     if (!campaign) throw new NotFoundException('Campanha não encontrada');
     if (
-      ![CommunicationCampaignStatus.DRAFT, CommunicationCampaignStatus.SCHEDULED].includes(
-        campaign.status,
-      )
+      campaign.status !== CommunicationCampaignStatus.DRAFT &&
+      campaign.status !== CommunicationCampaignStatus.SCHEDULED
     ) {
       throw new BadRequestException('Esta campanha não pode mais ser editada');
     }
