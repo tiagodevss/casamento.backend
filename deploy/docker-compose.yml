@@ -28,7 +28,8 @@ services:
       SECRET_KEY: ${WPPCONNECT_SECRET}
       WEBHOOK_URL: http://api:3000/api/whatsapp/webhook?secret=${WHATSAPP_WEBHOOK_SECRET}
       TOKEN_STORE_TYPE: file
-      CUSTOM_USER_DATA_DIR: /usr/src/wpp-server/userDataDir
+      # WPPConnect concatena CUSTOM_USER_DATA_DIR + nome_da_sessao; a barra final é obrigatória.
+      CUSTOM_USER_DATA_DIR: /usr/src/wpp-server/userDataDir/
       TZ: America/Sao_Paulo
     volumes:
       - casamento_wpp_tokens:/usr/src/wpp-server/tokens

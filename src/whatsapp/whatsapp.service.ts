@@ -13,6 +13,11 @@ import {
 
 const STOP_WORDS = new Set(['parar', 'sair', 'stop', 'cancelar mensagens']);
 const MENU_WORDS = new Set(['oi', 'ola', 'olá', 'menu', 'inicio', 'início', 'ajuda']);
+const DELIVERY_RANK: Partial<Record<CommunicationDeliveryStatus, number>> = {
+  [CommunicationDeliveryStatus.SENT]: 1,
+  [CommunicationDeliveryStatus.DELIVERED]: 2,
+  [CommunicationDeliveryStatus.READ]: 3,
+};
 
 function asRecord(value: unknown): Record<string, any> {
   return value && typeof value === 'object' ? (value as Record<string, any>) : {};
@@ -57,20 +62,34 @@ export class WhatsAppService {
     return this.provider.disconnect();
   }
 
-  async sendText(phoneInput: string, message: string, guestGroupId?: string) {
+  async sendText(
+    phoneInput: string,
+    message: string,
+    guestGroupId?: string,
+    eventType = 'manual',
+  ) {
     const phone = normalizeBrazilPhone(phoneInput);
     if (!phone) throw new Error('Telefone inválido');
+
+    // Once the provider accepts the message we must not turn an audit-log failure into a
+    // retryable send failure, otherwise callers can duplicate a real WhatsApp message.
     const result = await this.provider.sendText(phone, message);
-    await this.prisma.whatsAppMessage.create({
-      data: {
-        guestGroupId,
-        direction: WhatsAppMessageDirection.OUTBOUND,
-        phone,
-        body: message,
-        providerMessageId: result.providerMessageId,
-        eventType: 'manual',
-      },
-    });
+    try {
+      await this.prisma.whatsAppMessage.create({
+        data: {
+          guestGroupId,
+          direction: WhatsAppMessageDirection.OUTBOUND,
+          phone,
+          body: message,
+          providerMessageId: result.providerMessageId,
+          eventType,
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Mensagem enviada para ${phone}, mas o histórico não pôde ser persistido: ${String(error)}`,
+      );
+    }
     return result;
   }
 
@@ -110,24 +129,44 @@ export class WhatsAppService {
     const ack = Number(data.ack ?? data.status ?? 0);
     if (!Number.isFinite(ack) || ack <= 0) return;
 
-    let status: CommunicationDeliveryStatus = CommunicationDeliveryStatus.SENT;
-    const update: Record<string, any> = { status };
-    if (ack >= 3) {
-      status = CommunicationDeliveryStatus.READ;
-      update.status = status;
-      update.readAt = new Date();
-      update.deliveredAt = new Date();
-    } else if (ack >= 2) {
-      status = CommunicationDeliveryStatus.DELIVERED;
-      update.status = status;
-      update.deliveredAt = new Date();
-    } else {
-      update.sentAt = new Date();
+    const nextStatus =
+      ack >= 3
+        ? CommunicationDeliveryStatus.READ
+        : ack >= 2
+          ? CommunicationDeliveryStatus.DELIVERED
+          : CommunicationDeliveryStatus.SENT;
+    const delivery = await this.prisma.communicationDelivery.findFirst({
+      where: { providerMessageId },
+      select: {
+        id: true,
+        status: true,
+        sentAt: true,
+        deliveredAt: true,
+        readAt: true,
+      },
+    });
+    if (!delivery) return;
+
+    const currentRank = DELIVERY_RANK[delivery.status] ?? 0;
+    const nextRank = DELIVERY_RANK[nextStatus] ?? 0;
+    if (nextRank <= currentRank) return;
+    if (
+      delivery.status === CommunicationDeliveryStatus.FAILED ||
+      delivery.status === CommunicationDeliveryStatus.SKIPPED
+    ) {
+      return;
     }
 
-    await this.prisma.communicationDelivery.updateMany({
-      where: { providerMessageId },
-      data: update,
+    const now = new Date();
+    await this.prisma.communicationDelivery.update({
+      where: { id: delivery.id },
+      data: {
+        status: nextStatus,
+        sentAt: delivery.sentAt ?? now,
+        deliveredAt:
+          nextRank >= 2 ? (delivery.deliveredAt ?? now) : undefined,
+        readAt: nextRank >= 3 ? (delivery.readAt ?? now) : undefined,
+      },
     });
   }
 
@@ -140,31 +179,43 @@ export class WhatsAppService {
       sender.id,
       sender._serialized,
     ];
-    const phone = phoneCandidates
-      .map((candidate) => phoneFromWhatsAppId(candidate))
-      .find(Boolean) ?? null;
+    const phone =
+      phoneCandidates
+        .map((candidate) => phoneFromWhatsAppId(candidate))
+        .find(Boolean) ?? null;
     if (!phone) return;
+
     const body = String(data.body ?? '').trim();
     const normalizedBody = body.toLocaleLowerCase('pt-BR').trim();
     const providerMessageId = extractProviderId(data);
-
     const guestInclude = {
       members: { orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }] },
       rsvpResponse: true,
     };
-    let guest = await this.prisma.guestGroup.findFirst({
+
+    let matches = await this.prisma.guestGroup.findMany({
       where: { phoneNormalized: phone },
       include: guestInclude,
     });
-    if (!guest) {
+    if (matches.length === 0) {
       const legacyCandidates = await this.prisma.guestGroup.findMany({
         where: { phone: { not: null } },
         include: guestInclude,
       });
-      guest = legacyCandidates.find((candidate) => normalizeBrazilPhone(candidate.phone) === phone) ?? null;
+      matches = legacyCandidates.filter(
+        (candidate) => normalizeBrazilPhone(candidate.phone) === phone,
+      );
     }
 
-    const needsHuman = normalizedBody === '4';
+    const ambiguous = matches.length > 1;
+    const guest = matches.length === 1 ? matches[0] : null;
+    const pendingHandoff = await this.prisma.whatsAppMessage.findFirst({
+      where: { phone, needsHuman: true, resolvedAt: null },
+      select: { id: true },
+    });
+    const requestedHuman = normalizedBody === '4';
+    const needsHuman = Boolean(pendingHandoff) || requestedHuman || ambiguous;
+
     try {
       await this.prisma.whatsAppMessage.create({
         data: {
@@ -183,9 +234,10 @@ export class WhatsAppService {
     }
 
     if (STOP_WORDS.has(normalizedBody)) {
-      if (guest) {
-        await this.prisma.guestGroup.update({
-          where: { id: guest.id },
+      const ids = matches.map((item) => item.id);
+      if (ids.length > 0) {
+        await this.prisma.guestGroup.updateMany({
+          where: { id: { in: ids } },
           data: { whatsappOptOut: true, whatsappOptOutAt: new Date() },
         });
       }
@@ -194,6 +246,30 @@ export class WhatsAppService {
         'Tudo certo. Não enviaremos mais lembretes automáticos por aqui. 💛',
         guest?.id,
         'opt-out',
+      );
+      return;
+    }
+
+    // After handoff, the bot stays silent until the admin replies/resolves the thread.
+    // Every subsequent inbound message is still marked needsHuman so the context is visible.
+    if (pendingHandoff) return;
+
+    if (ambiguous) {
+      await this.sendAutomatedReply(
+        phone,
+        'Encontrei este número em mais de um convite e não vou arriscar mostrar informações do convite errado. 💛 Sua mensagem foi encaminhada para a Gabriela e o Tiago.',
+        undefined,
+        'ambiguous-phone-handoff',
+      );
+      return;
+    }
+
+    if (requestedHuman) {
+      await this.sendAutomatedReply(
+        phone,
+        'Certo! 💛 Sua mensagem ficou sinalizada para a Gabriela e o Tiago. Eles poderão continuar o atendimento por aqui.',
+        guest?.id,
+        'handoff',
       );
       return;
     }
@@ -222,12 +298,21 @@ export class WhatsAppService {
       rsvpResponse: { partyAttending: boolean | null } | null;
     },
   ) {
-    const appUrl = this.config.get<string>('APP_URL', 'https://tiagoegabriela.com.br').replace(/\/$/, '');
+    const appUrl = this.config
+      .get<string>('APP_URL', 'https://tiagoegabriela.com.br')
+      .replace(/\/$/, '');
     const inviteLink = `${appUrl}/?convite=${guest.id}`;
     const giftLink = `${appUrl}/presentes?convite=${guest.id}`;
 
     if (normalizedBody === '1') {
-      const pending = guest.members.filter((member) => member.attending == null).map((member) => member.name);
+      const pending = guest.members
+        .filter((member) => member.attending == null)
+        .map((member) => member.name);
+      const partyPending =
+        guest.invitedToParty &&
+        guest.members.some((member) => member.attending === true) &&
+        guest.rsvpResponse?.partyAttending == null;
+      if (partyPending) pending.push('confirmação da recepção');
       const prefix = pending.length
         ? `Ainda aguardamos a confirmação de: *${pending.join(', ')}*.\n\n`
         : 'Seu convite já está respondido. Se quiser revisar a confirmação, use o link abaixo.\n\n';
@@ -263,13 +348,6 @@ export class WhatsAppService {
       };
     }
 
-    if (normalizedBody === '4') {
-      return {
-        eventType: 'handoff',
-        message: 'Certo! 💛 Sua mensagem ficou sinalizada para a Gabriela e o Tiago. Eles poderão continuar o atendimento por aqui.',
-      };
-    }
-
     if (MENU_WORDS.has(normalizedBody)) {
       return { eventType: 'menu', message: this.menuText() };
     }
@@ -300,16 +378,22 @@ export class WhatsAppService {
   ) {
     try {
       const result = await this.provider.sendText(phone, message);
-      await this.prisma.whatsAppMessage.create({
-        data: {
-          guestGroupId,
-          direction: WhatsAppMessageDirection.OUTBOUND,
-          phone,
-          body: message,
-          providerMessageId: result.providerMessageId,
-          eventType,
-        },
-      });
+      try {
+        await this.prisma.whatsAppMessage.create({
+          data: {
+            guestGroupId,
+            direction: WhatsAppMessageDirection.OUTBOUND,
+            phone,
+            body: message,
+            providerMessageId: result.providerMessageId,
+            eventType,
+          },
+        });
+      } catch (error) {
+        this.logger.error(
+          `Resposta enviada para ${phone}, mas o histórico não pôde ser persistido: ${String(error)}`,
+        );
+      }
     } catch (error) {
       this.logger.error(`Falha ao responder automaticamente ${phone}: ${String(error)}`);
     }

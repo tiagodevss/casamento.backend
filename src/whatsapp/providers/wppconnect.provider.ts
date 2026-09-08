@@ -46,7 +46,9 @@ export class WppConnectProvider implements WhatsAppProvider {
   ) {}
 
   private get baseUrl() {
-    return this.config.get<string>('WPPCONNECT_URL', 'http://wppconnect:21465').replace(/\/$/, '');
+    return this.config
+      .get<string>('WPPCONNECT_URL', 'http://wppconnect:21465')
+      .replace(/\/$/, '');
   }
 
   private get session() {
@@ -57,13 +59,6 @@ export class WppConnectProvider implements WhatsAppProvider {
     return this.config.get<string>('WPPCONNECT_SECRET', '');
   }
 
-  private get webhookUrl() {
-    return this.config.get<string>(
-      'WPPCONNECT_WEBHOOK_URL',
-      'http://api:3000/api/whatsapp/webhook',
-    );
-  }
-
   private async accessToken(): Promise<string> {
     if (this.token) return this.token;
     if (!this.secret) {
@@ -72,7 +67,11 @@ export class WppConnectProvider implements WhatsAppProvider {
 
     try {
       const response = await firstValueFrom(
-        this.http.post(`${this.baseUrl}/api/${encodeURIComponent(this.session)}/${encodeURIComponent(this.secret)}/generate-token`, {}),
+        this.http.post(
+          `${this.baseUrl}/api/${encodeURIComponent(this.session)}/${encodeURIComponent(this.secret)}/generate-token`,
+          {},
+          { timeout: 20_000 },
+        ),
       );
       const token = response.data?.token ?? response.data?.full?.replace(/^wppconnect:/, '');
       if (!token) throw new Error('Token não retornado pelo WPPConnect');
@@ -83,7 +82,12 @@ export class WppConnectProvider implements WhatsAppProvider {
     }
   }
 
-  private async request<T>(method: 'get' | 'post', path: string, body?: unknown): Promise<T> {
+  private async request<T>(
+    method: 'get' | 'post',
+    path: string,
+    body?: unknown,
+    retryUnauthorized = true,
+  ): Promise<T> {
     const token = await this.accessToken();
     try {
       const response = await firstValueFrom(
@@ -97,8 +101,9 @@ export class WppConnectProvider implements WhatsAppProvider {
       );
       return response.data;
     } catch (error: any) {
-      if (error?.response?.status === 401) {
+      if (error?.response?.status === 401 && retryUnauthorized) {
         this.token = undefined;
+        return this.request<T>(method, path, body, false);
       }
       throw this.connectionError(error);
     }
@@ -127,10 +132,13 @@ export class WppConnectProvider implements WhatsAppProvider {
   }
 
   startSession() {
+    // WEBHOOK_URL is configured on the WPPConnect container itself. Do not override it
+    // here: keeping the webhook secret in one source of truth avoids accidentally
+    // starting a session with a secretless callback URL.
     return this.request(
       'post',
       `/api/${encodeURIComponent(this.session)}/start-session`,
-      { webhook: this.webhookUrl, waitQrCode: false },
+      { waitQrCode: false },
     );
   }
 
@@ -146,30 +154,47 @@ export class WppConnectProvider implements WhatsAppProvider {
         }),
       );
 
-      const contentType = String(response.headers?.['content-type'] ?? '');
-      if (response.status >= 200 && response.status < 300 && contentType.includes('image/')) {
-        const bytes = Buffer.from(response.data);
-        return {
-          qrCode: `data:${contentType.split(';')[0] || 'image/png'};base64,${bytes.toString('base64')}`,
-          raw: { contentType, size: bytes.length },
-        };
+      if (response.status === 401) {
+        this.token = undefined;
+        const freshToken = await this.accessToken();
+        const retry = await firstValueFrom(
+          this.http.get(`${this.baseUrl}/api/${encodeURIComponent(this.session)}/qrcode-session`, {
+            headers: { Authorization: `Bearer ${freshToken}` },
+            responseType: 'arraybuffer',
+            timeout: 20_000,
+            validateStatus: () => true,
+          }),
+        );
+        return this.parseQrResponse(retry);
       }
-
-      const text = Buffer.from(response.data).toString('utf8');
-      let raw: unknown = text;
-      try {
-        raw = JSON.parse(text);
-      } catch {
-        // Keep the text response for diagnostics.
-      }
-      if (response.status < 200 || response.status >= 300) {
-        throw new Error(findStringByKeys(raw, ['message', 'error']) ?? `HTTP ${response.status}`);
-      }
-      const qrCode = findStringByKeys(raw, ['qrcode', 'qrCode', 'base64', 'urlCode']);
-      return { qrCode: qrCode ?? null, raw };
+      return this.parseQrResponse(response);
     } catch (error) {
       throw this.connectionError(error);
     }
+  }
+
+  private parseQrResponse(response: any) {
+    const contentType = String(response.headers?.['content-type'] ?? '');
+    if (response.status >= 200 && response.status < 300 && contentType.includes('image/')) {
+      const bytes = Buffer.from(response.data);
+      return {
+        qrCode: `data:${contentType.split(';')[0] || 'image/png'};base64,${bytes.toString('base64')}`,
+        raw: { contentType, size: bytes.length },
+      };
+    }
+
+    const text = Buffer.from(response.data).toString('utf8');
+    let raw: unknown = text;
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      // Keep text for diagnostics.
+    }
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(findStringByKeys(raw, ['message', 'error']) ?? `HTTP ${response.status}`);
+    }
+    const qrCode = findStringByKeys(raw, ['qrcode', 'qrCode', 'base64', 'urlCode']);
+    return { qrCode: qrCode ?? null, raw };
   }
 
   disconnect() {

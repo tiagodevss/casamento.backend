@@ -30,6 +30,13 @@ const WEDDING_AT = new Date('2026-11-14T16:00:00-03:00');
 const CEREMONY_MAPS =
   'https://www.google.com/maps/search/?api=1&query=Igreja+Universal+Paulínia+Av.+José+Paulino+610+Centro+Paulínia+SP';
 const PARTY_MAPS = 'https://maps.app.goo.gl/xCx15d8vKrzTXubV8';
+const STALE_PROCESSING_MS = 2 * 60_000;
+const PARTY_DETAIL_TEMPLATE_KEYS = new Set([
+  'INFO_PARTY',
+  'WEEK_PARTY',
+  'TOMORROW_PARTY',
+  'TODAY_PARTY',
+]);
 
 const groupInclude = {
   members: { orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }] },
@@ -37,18 +44,31 @@ const groupInclude = {
 } satisfies Prisma.GuestGroupInclude;
 
 type CommunicationGroup = Prisma.GuestGroupGetPayload<{ include: typeof groupInclude }>;
-
 type CampaignWithTemplate = Prisma.CommunicationCampaignGetPayload<{
   include: { template: true };
 }>;
-
 type EligibilityResult = { eligible: true } | { eligible: false; reason: string };
+type PreviewIncluded = {
+  guestGroupId: string;
+  displayName: string;
+  phone: string;
+  memberCount: number;
+  message: string;
+};
+type PreviewExcluded = {
+  guestGroupId: string;
+  displayName: string;
+  phone?: string;
+  memberCount: number;
+  reason: string;
+};
 
 @Injectable()
 export class CommunicationsService implements OnModuleInit {
   private readonly logger = new Logger(CommunicationsService.name);
   private workerBusy = false;
   private schedulerBusy = false;
+  private recoveryBusy = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -58,6 +78,7 @@ export class CommunicationsService implements OnModuleInit {
 
   async onModuleInit() {
     await this.ensureDefaults();
+    await this.recoverStaleWork();
   }
 
   async ensureDefaults() {
@@ -102,24 +123,50 @@ export class CommunicationsService implements OnModuleInit {
 
   async updateTemplate(id: string, dto: UpdateCommunicationTemplateDto) {
     await this.requireTemplate(id);
-    const updated = await this.prisma.communicationTemplate.update({
-      where: { id },
-      data: {
-        name: dto.name.trim(),
-        description: dto.description?.trim() || null,
-        bodySingle: dto.bodySingle.trim(),
-        bodyGroup: dto.bodyGroup.trim(),
-        active: dto.active,
-      },
-    });
+
+    // Pull scheduled campaigns back to draft before editing their copy. This closes the
+    // race where the scheduler could start a campaign while an operator changes a template.
     await this.prisma.communicationCampaign.updateMany({
-      where: {
-        templateId: id,
-        status: { in: [CommunicationCampaignStatus.DRAFT, CommunicationCampaignStatus.SCHEDULED] },
-      },
-      data: { previewedAt: null, status: CommunicationCampaignStatus.DRAFT },
+      where: { templateId: id, status: CommunicationCampaignStatus.SCHEDULED },
+      data: { status: CommunicationCampaignStatus.DRAFT, previewedAt: null },
     });
-    return updated;
+
+    const processing = await this.prisma.communicationCampaign.count({
+      where: { templateId: id, status: CommunicationCampaignStatus.PROCESSING },
+    });
+    if (processing > 0) {
+      throw new BadRequestException(
+        'Aguarde a campanha em processamento terminar antes de alterar este template',
+      );
+    }
+
+    const editableCampaigns = await this.prisma.communicationCampaign.findMany({
+      where: { templateId: id, status: CommunicationCampaignStatus.DRAFT },
+      select: { id: true },
+    });
+    const campaignIds = editableCampaigns.map((item) => item.id);
+
+    return this.prisma.$transaction(async (tx) => {
+      if (campaignIds.length > 0) {
+        await tx.communicationDelivery.deleteMany({
+          where: { campaignId: { in: campaignIds } },
+        });
+      }
+      await tx.communicationCampaign.updateMany({
+        where: { id: { in: campaignIds } },
+        data: { previewedAt: null, status: CommunicationCampaignStatus.DRAFT },
+      });
+      return tx.communicationTemplate.update({
+        where: { id },
+        data: {
+          name: dto.name.trim(),
+          description: dto.description?.trim() || null,
+          bodySingle: dto.bodySingle.trim(),
+          bodyGroup: dto.bodyGroup.trim(),
+          active: dto.active,
+        },
+      });
+    });
   }
 
   listCampaigns() {
@@ -164,26 +211,30 @@ export class CommunicationsService implements OnModuleInit {
     if (audience === CommunicationAudience.CUSTOM && ids.length === 0) {
       throw new BadRequestException('Selecione ao menos um convite para uma campanha personalizada');
     }
-    return this.prisma.communicationCampaign.update({
-      where: { id },
-      data: {
-        name: dto.name?.trim(),
-        templateId: dto.templateId,
-        audience: dto.audience,
-        includeGuestGroupIds: dto.includeGuestGroupIds,
-        requireInviteSent: dto.requireInviteSent,
-        scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : undefined,
-        previewedAt: null,
-        status: CommunicationCampaignStatus.DRAFT,
-      },
-      include: { template: true },
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.communicationDelivery.deleteMany({ where: { campaignId: id } });
+      return tx.communicationCampaign.update({
+        where: { id },
+        data: {
+          name: dto.name?.trim(),
+          templateId: dto.templateId,
+          audience: dto.audience,
+          includeGuestGroupIds: dto.includeGuestGroupIds,
+          requireInviteSent: dto.requireInviteSent,
+          scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : undefined,
+          previewedAt: null,
+          status: CommunicationCampaignStatus.DRAFT,
+        },
+        include: { template: true },
+      });
     });
   }
 
   async schedule(id: string, scheduledAt: Date) {
     const campaign = await this.requireEditableCampaign(id);
     await this.requireActiveTemplate(campaign.templateId);
-    if (!campaign.previewedAt) throw new BadRequestException('Visualize o público antes de agendar a campanha');
+    await this.requirePreparedCampaign(id, campaign.previewedAt);
     return this.prisma.communicationCampaign.update({
       where: { id },
       data: {
@@ -198,7 +249,7 @@ export class CommunicationsService implements OnModuleInit {
   async sendNow(id: string) {
     const campaign = await this.requireEditableCampaign(id);
     await this.requireActiveTemplate(campaign.templateId);
-    if (!campaign.previewedAt) throw new BadRequestException('Visualize o público antes de enviar a campanha');
+    await this.requirePreparedCampaign(id, campaign.previewedAt);
     await this.prisma.communicationCampaign.update({
       where: { id },
       data: { scheduledAt: new Date(), status: CommunicationCampaignStatus.SCHEDULED },
@@ -224,7 +275,9 @@ export class CommunicationsService implements OnModuleInit {
       this.prisma.communicationDelivery.updateMany({
         where: {
           campaignId: id,
-          status: { in: [CommunicationDeliveryStatus.PENDING, CommunicationDeliveryStatus.PROCESSING] },
+          status: {
+            in: [CommunicationDeliveryStatus.PENDING, CommunicationDeliveryStatus.PROCESSING],
+          },
         },
         data: {
           status: CommunicationDeliveryStatus.SKIPPED,
@@ -241,11 +294,45 @@ export class CommunicationsService implements OnModuleInit {
       include: { template: true },
     });
     if (!campaign) throw new NotFoundException('Campanha não encontrada');
-    if (!campaign.template.active) throw new BadRequestException('O template desta campanha está inativo');
+    if (
+      campaign.status !== CommunicationCampaignStatus.DRAFT &&
+      campaign.status !== CommunicationCampaignStatus.SCHEDULED
+    ) {
+      throw new BadRequestException('Esta campanha não pode mais ser visualizada/editada');
+    }
+    if (!campaign.template.active) {
+      throw new BadRequestException('O template desta campanha está inativo');
+    }
+
+    // Any new preview revokes a prior schedule. The exact recipients and phones below are
+    // persisted as PENDING deliveries, so execution can only remove recipients, never add
+    // someone who was not reviewed by the operator.
+    await this.prisma.communicationCampaign.updateMany({
+      where: {
+        id,
+        status: { in: [CommunicationCampaignStatus.DRAFT, CommunicationCampaignStatus.SCHEDULED] },
+      },
+      data: { status: CommunicationCampaignStatus.DRAFT },
+    });
+
     const preview = await this.buildPreview(campaign);
-    await this.prisma.communicationCampaign.update({
-      where: { id },
-      data: { previewedAt: new Date() },
+    const previewedAt = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.communicationDelivery.deleteMany({ where: { campaignId: id } });
+      if (preview.included.length > 0) {
+        await tx.communicationDelivery.createMany({
+          data: preview.included.map((item) => ({
+            campaignId: id,
+            guestGroupId: item.guestGroupId,
+            phone: item.phone,
+            renderedMessage: item.message,
+          })),
+        });
+      }
+      await tx.communicationCampaign.update({
+        where: { id },
+        data: { previewedAt, status: CommunicationCampaignStatus.DRAFT },
+      });
     });
     return preview;
   }
@@ -266,33 +353,43 @@ export class CommunicationsService implements OnModuleInit {
   }
 
   async stats() {
-    const [groups, optOuts, deliveryCounts, pendingHuman, campaigns, lastCampaign] = await Promise.all([
-      this.prisma.guestGroup.findMany({
-        select: { phoneNormalized: true, members: { select: { id: true } } },
-      }),
-      this.prisma.guestGroup.count({ where: { whatsappOptOut: true } }),
-      this.prisma.communicationDelivery.groupBy({
-        by: ['status'],
-        _count: { _all: true },
-      }),
-      this.prisma.whatsAppMessage.count({ where: { needsHuman: true, resolvedAt: null } }),
-      this.prisma.communicationCampaign.findMany({
-        where: { status: CommunicationCampaignStatus.SCHEDULED, scheduledAt: { gte: new Date() } },
-        include: { template: true },
-        orderBy: { scheduledAt: 'asc' },
-        take: 1,
-      }),
-      this.prisma.communicationCampaign.findFirst({
-        where: { status: CommunicationCampaignStatus.COMPLETED },
-        include: { template: true },
-        orderBy: { finishedAt: 'desc' },
-      }),
-    ]);
+    const [groups, optOuts, deliveryCounts, pendingHuman, campaigns, lastCampaign] =
+      await Promise.all([
+        this.prisma.guestGroup.findMany({
+          select: { phoneNormalized: true, members: { select: { id: true } } },
+        }),
+        this.prisma.guestGroup.count({ where: { whatsappOptOut: true } }),
+        this.prisma.communicationDelivery.groupBy({
+          by: ['status'],
+          _count: { _all: true },
+        }),
+        this.prisma.whatsAppMessage.count({ where: { needsHuman: true, resolvedAt: null } }),
+        this.prisma.communicationCampaign.findMany({
+          where: {
+            status: CommunicationCampaignStatus.SCHEDULED,
+            scheduledAt: { gte: new Date() },
+          },
+          include: { template: true },
+          orderBy: { scheduledAt: 'asc' },
+          take: 1,
+        }),
+        this.prisma.communicationCampaign.findFirst({
+          where: { status: CommunicationCampaignStatus.COMPLETED },
+          include: { template: true },
+          orderBy: { finishedAt: 'desc' },
+        }),
+      ]);
 
     const withPhone = groups.filter((group) => Boolean(group.phoneNormalized)).length;
     const peopleWithPhone = groups
       .filter((group) => Boolean(group.phoneNormalized))
       .reduce((sum, group) => sum + group.members.length, 0);
+    const phoneCounts = new Map<string, number>();
+    for (const group of groups) {
+      if (!group.phoneNormalized) continue;
+      phoneCounts.set(group.phoneNormalized, (phoneCounts.get(group.phoneNormalized) ?? 0) + 1);
+    }
+    const duplicateCounts = [...phoneCounts.values()].filter((count) => count > 1);
     const deliveries = Object.fromEntries(
       deliveryCounts.map((item) => [item.status, item._count._all]),
     );
@@ -304,6 +401,8 @@ export class CommunicationsService implements OnModuleInit {
         withoutPhone: groups.length - withPhone,
         peopleWithPhone,
         optOuts,
+        duplicatePhoneNumbers: duplicateCounts.length,
+        duplicatePhoneGroups: duplicateCounts.reduce((sum, count) => sum + count, 0),
       },
       deliveries,
       pendingHuman,
@@ -324,16 +423,22 @@ export class CommunicationsService implements OnModuleInit {
   async resolveConversationMessage(id: string) {
     const existing = await this.prisma.whatsAppMessage.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('Mensagem não encontrada');
-    return this.prisma.whatsAppMessage.update({
-      where: { id },
+    const resolved = await this.prisma.whatsAppMessage.updateMany({
+      where: { phone: existing.phone, needsHuman: true, resolvedAt: null },
       data: { resolvedAt: new Date(), needsHuman: false },
     });
+    return { ok: true, resolved: resolved.count };
   }
 
   async replyConversationMessage(id: string, message: string) {
     const existing = await this.prisma.whatsAppMessage.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('Mensagem não encontrada');
-    await this.whatsapp.sendText(existing.phone, message.trim(), existing.guestGroupId ?? undefined);
+    await this.whatsapp.sendText(
+      existing.phone,
+      message.trim(),
+      existing.guestGroupId ?? undefined,
+      'human-reply',
+    );
     await this.resolveConversationMessage(id);
     return { ok: true };
   }
@@ -341,10 +446,18 @@ export class CommunicationsService implements OnModuleInit {
   async sendGuestMessage(guestGroupId: string, message: string) {
     const guest = await this.prisma.guestGroup.findUnique({ where: { id: guestGroupId } });
     if (!guest) throw new NotFoundException('Convidado não encontrado');
-    if (guest.whatsappOptOut) throw new BadRequestException('Este convite optou por não receber mensagens');
+    if (guest.whatsappOptOut) {
+      throw new BadRequestException('Este convite optou por não receber mensagens');
+    }
     const phone = guest.phoneNormalized ?? normalizeBrazilPhone(guest.phone);
     if (!phone) throw new BadRequestException('Este convite não possui um telefone válido');
-    return this.whatsapp.sendText(phone, message.trim(), guest.id);
+    const owners = await this.prisma.guestGroup.count({ where: { phoneNormalized: phone } });
+    if (owners > 1) {
+      throw new BadRequestException(
+        'Este telefone está associado a mais de um convite. Corrija os contatos antes de enviar.',
+      );
+    }
+    return this.whatsapp.sendText(phone, message.trim(), guest.id, 'manual-guest');
   }
 
   @Interval(60_000)
@@ -362,9 +475,7 @@ export class CommunicationsService implements OnModuleInit {
         orderBy: { scheduledAt: 'asc' },
         take: 5,
       });
-      for (const campaign of due) {
-        await this.startCampaign(campaign.id);
-      }
+      for (const campaign of due) await this.startCampaign(campaign.id);
     } catch (error) {
       this.logger.error(`Falha ao iniciar campanhas agendadas: ${String(error)}`);
     } finally {
@@ -383,43 +494,14 @@ export class CommunicationsService implements OnModuleInit {
     });
     if (claimed.count === 0) return;
 
-    try {
-      const campaign = await this.prisma.communicationCampaign.findUnique({
-        where: { id },
-        include: { template: true },
-      });
-      if (!campaign) return;
-      if (!campaign.template.active) {
-        await this.prisma.communicationCampaign.update({
-          where: { id },
-          data: { status: CommunicationCampaignStatus.DRAFT, previewedAt: null },
-        });
-        return;
-      }
-      const preview = await this.buildPreview(campaign);
-      if (preview.included.length > 0) {
-        await this.prisma.communicationDelivery.createMany({
-          data: preview.included.map((item) => ({
-            campaignId: campaign.id,
-            guestGroupId: item.guestGroupId,
-            phone: item.phone,
-            renderedMessage: item.message,
-          })),
-          skipDuplicates: true,
-        });
-      }
-      if (preview.included.length === 0) {
-        await this.prisma.communicationCampaign.update({
-          where: { id },
-          data: { status: CommunicationCampaignStatus.COMPLETED, finishedAt: new Date() },
-        });
-      }
-    } catch (error) {
+    const deliveryCount = await this.prisma.communicationDelivery.count({
+      where: { campaignId: id, status: CommunicationDeliveryStatus.PENDING },
+    });
+    if (deliveryCount === 0) {
       await this.prisma.communicationCampaign.update({
         where: { id },
-        data: { status: CommunicationCampaignStatus.FAILED, finishedAt: new Date() },
+        data: { status: CommunicationCampaignStatus.COMPLETED, finishedAt: new Date() },
       });
-      throw error;
     }
   }
 
@@ -455,7 +537,6 @@ export class CommunicationsService implements OnModuleInit {
         data: { status: CommunicationDeliveryStatus.PROCESSING },
       });
       if (!claimed.count) return;
-
       await this.processDelivery(delivery.id);
     } finally {
       this.workerBusy = false;
@@ -483,16 +564,28 @@ export class CommunicationsService implements OnModuleInit {
       return;
     }
 
-    const eligibility = this.evaluateEligibility(delivery.guestGroup, delivery.campaign);
+    const currentPhone =
+      delivery.guestGroup.phoneNormalized ?? normalizeBrazilPhone(delivery.guestGroup.phone);
+    if (currentPhone !== delivery.phone) {
+      await this.skipDelivery(delivery.id, delivery.campaignId, 'PHONE_CHANGED_AFTER_PREVIEW');
+      return;
+    }
+
+    const phoneOwners = await this.prisma.guestGroup.count({
+      where: { phoneNormalized: delivery.phone },
+    });
+    if (phoneOwners > 1) {
+      await this.skipDelivery(delivery.id, delivery.campaignId, 'DUPLICATE_PHONE');
+      return;
+    }
+
+    const eligibility = this.evaluateEligibility(
+      delivery.guestGroup,
+      delivery.campaign,
+      delivery.campaign.template.key,
+    );
     if ('reason' in eligibility) {
-      await this.prisma.communicationDelivery.update({
-        where: { id: delivery.id },
-        data: {
-          status: CommunicationDeliveryStatus.SKIPPED,
-          skippedReason: eligibility.reason,
-        },
-      });
-      await this.finishCampaignIfDone(delivery.campaignId);
+      await this.skipDelivery(delivery.id, delivery.campaignId, eligibility.reason);
       return;
     }
 
@@ -511,12 +604,22 @@ export class CommunicationsService implements OnModuleInit {
       });
       return;
     }
+
+    let result;
     try {
-      const result = await this.whatsapp.sendText(
+      result = await this.whatsapp.sendText(
         delivery.phone,
         message,
         delivery.guestGroupId,
+        `campaign:${delivery.campaignId}`,
       );
+    } catch (error: any) {
+      await this.recordSendFailure(delivery, error);
+      await this.finishCampaignIfDone(delivery.campaignId);
+      return;
+    }
+
+    try {
       await this.prisma.communicationDelivery.update({
         where: { id: delivery.id },
         data: {
@@ -529,30 +632,109 @@ export class CommunicationsService implements OnModuleInit {
           lastError: null,
         },
       });
-    } catch (error: any) {
-      const attempts = delivery.attempts + 1;
-      const failed = attempts >= 3;
-      await this.prisma.communicationDelivery.update({
-        where: { id: delivery.id },
+    } catch (error) {
+      // The provider already accepted the message. Never blindly retry this delivery: a
+      // restart recovery will mark the unknown result as FAILED instead of duplicating it.
+      this.logger.error(
+        `WhatsApp aceitou a entrega ${delivery.id}, mas o status não pôde ser persistido: ${String(error)}`,
+      );
+      return;
+    }
+
+    await this.finishCampaignIfDone(delivery.campaignId);
+  }
+
+  private async recordSendFailure(
+    delivery: { id: string; attempts: number },
+    error: unknown,
+  ) {
+    const attempts = delivery.attempts + 1;
+    const failed = attempts >= 3;
+    await this.prisma.communicationDelivery.update({
+      where: { id: delivery.id },
+      data: {
+        attempts,
+        status: failed
+          ? CommunicationDeliveryStatus.FAILED
+          : CommunicationDeliveryStatus.PENDING,
+        failedAt: failed ? new Date() : null,
+        nextAttemptAt: failed ? null : new Date(Date.now() + 5 * 60_000),
+        lastError: String((error as any)?.message ?? error).slice(0, 1000),
+      },
+    });
+  }
+
+  private async skipDelivery(id: string, campaignId: string, reason: string) {
+    await this.prisma.communicationDelivery.update({
+      where: { id },
+      data: { status: CommunicationDeliveryStatus.SKIPPED, skippedReason: reason },
+    });
+    await this.finishCampaignIfDone(campaignId);
+  }
+
+  @Interval(60_000)
+  async recoverStaleWork() {
+    if (this.recoveryBusy) return;
+    this.recoveryBusy = true;
+    try {
+      const cutoff = new Date(Date.now() - STALE_PROCESSING_MS);
+      const staleCampaigns = await this.prisma.communicationCampaign.findMany({
+        where: {
+          status: CommunicationCampaignStatus.PROCESSING,
+          startedAt: { lt: cutoff },
+        },
+        select: { id: true, _count: { select: { deliveries: true } } },
+        take: 50,
+      });
+
+      const emptyCampaignIds = staleCampaigns
+        .filter((campaign) => campaign._count.deliveries === 0)
+        .map((campaign) => campaign.id);
+      if (emptyCampaignIds.length > 0) {
+        await this.prisma.communicationCampaign.updateMany({
+          where: {
+            id: { in: emptyCampaignIds },
+            status: CommunicationCampaignStatus.PROCESSING,
+          },
+          data: { status: CommunicationCampaignStatus.SCHEDULED, startedAt: null },
+        });
+        this.logger.warn(
+          `${emptyCampaignIds.length} campanha(s) sem entregas foram recuperadas para SCHEDULED`,
+        );
+      }
+
+      const unknown = await this.prisma.communicationDelivery.updateMany({
+        where: {
+          status: CommunicationDeliveryStatus.PROCESSING,
+          updatedAt: { lt: cutoff },
+          campaign: { status: CommunicationCampaignStatus.PROCESSING },
+        },
         data: {
-          attempts,
-          status: failed
-            ? CommunicationDeliveryStatus.FAILED
-            : CommunicationDeliveryStatus.PENDING,
-          failedAt: failed ? new Date() : null,
-          nextAttemptAt: failed ? null : new Date(Date.now() + 5 * 60_000),
-          lastError: String(error?.message ?? error).slice(0, 1000),
+          status: CommunicationDeliveryStatus.FAILED,
+          failedAt: new Date(),
+          nextAttemptAt: null,
+          lastError:
+            'Resultado do envio desconhecido após interrupção do processo; reenvio automático bloqueado para evitar duplicidade.',
         },
       });
+      if (unknown.count > 0) {
+        this.logger.warn(
+          `${unknown.count} entrega(s) com resultado externo incerto foram marcadas como FAILED`,
+        );
+      }
+      await this.finishIdleCampaigns();
+    } catch (error) {
+      this.logger.error(`Falha ao recuperar fila de comunicações: ${String(error)}`);
+    } finally {
+      this.recoveryBusy = false;
     }
-    await this.finishCampaignIfDone(delivery.campaignId);
   }
 
   private async finishIdleCampaigns() {
     const processing = await this.prisma.communicationCampaign.findMany({
       where: { status: CommunicationCampaignStatus.PROCESSING },
       select: { id: true },
-      take: 20,
+      take: 50,
     });
     for (const campaign of processing) await this.finishCampaignIfDone(campaign.id);
   }
@@ -561,13 +743,24 @@ export class CommunicationsService implements OnModuleInit {
     const remaining = await this.prisma.communicationDelivery.count({
       where: {
         campaignId,
-        status: { in: [CommunicationDeliveryStatus.PENDING, CommunicationDeliveryStatus.PROCESSING] },
+        status: {
+          in: [CommunicationDeliveryStatus.PENDING, CommunicationDeliveryStatus.PROCESSING],
+        },
       },
     });
     if (remaining > 0) return;
+    const failed = await this.prisma.communicationDelivery.count({
+      where: { campaignId, status: CommunicationDeliveryStatus.FAILED },
+    });
     await this.prisma.communicationCampaign.updateMany({
       where: { id: campaignId, status: CommunicationCampaignStatus.PROCESSING },
-      data: { status: CommunicationCampaignStatus.COMPLETED, finishedAt: new Date() },
+      data: {
+        status:
+          failed > 0
+            ? CommunicationCampaignStatus.FAILED
+            : CommunicationCampaignStatus.COMPLETED,
+        finishedAt: new Date(),
+      },
     });
   }
 
@@ -576,33 +769,39 @@ export class CommunicationsService implements OnModuleInit {
       include: groupInclude,
       orderBy: { displayName: 'asc' },
     });
-    const included: Array<{
-      guestGroupId: string;
-      displayName: string;
-      phone: string;
-      memberCount: number;
-      message: string;
-    }> = [];
-    const excluded: Array<{
-      guestGroupId: string;
-      displayName: string;
-      memberCount: number;
-      reason: string;
-    }> = [];
-
+    const phoneOwners = new Map<string, number>();
     for (const group of groups) {
-      const eligibility = this.evaluateEligibility(group, campaign);
+      const phone = group.phoneNormalized ?? normalizeBrazilPhone(group.phone);
+      if (!phone) continue;
+      phoneOwners.set(phone, (phoneOwners.get(phone) ?? 0) + 1);
+    }
+
+    const included: PreviewIncluded[] = [];
+    const excluded: PreviewExcluded[] = [];
+    for (const group of groups) {
+      const phone = group.phoneNormalized ?? normalizeBrazilPhone(group.phone);
+      const eligibility = this.evaluateEligibility(group, campaign, campaign.template.key);
       if ('reason' in eligibility) {
         excluded.push({
           guestGroupId: group.id,
           displayName: group.displayName,
+          phone: phone ?? undefined,
           memberCount: group.members.length,
           reason: eligibility.reason,
         });
         continue;
       }
-      const phone = group.phoneNormalized ?? normalizeBrazilPhone(group.phone);
       if (!phone) continue;
+      if ((phoneOwners.get(phone) ?? 0) > 1) {
+        excluded.push({
+          guestGroupId: group.id,
+          displayName: group.displayName,
+          phone,
+          memberCount: group.members.length,
+          reason: 'DUPLICATE_PHONE',
+        });
+        continue;
+      }
       included.push({
         guestGroupId: group.id,
         displayName: group.displayName,
@@ -626,6 +825,7 @@ export class CommunicationsService implements OnModuleInit {
       CampaignWithTemplate,
       'audience' | 'includeGuestGroupIds' | 'requireInviteSent'
     >,
+    templateKey?: string,
   ): EligibilityResult {
     const phone = group.phoneNormalized ?? normalizeBrazilPhone(group.phone);
     if (!phone) return { eligible: false, reason: 'NO_VALID_PHONE' };
@@ -633,9 +833,26 @@ export class CommunicationsService implements OnModuleInit {
     if (campaign.requireInviteSent && !group.inviteSent) {
       return { eligible: false, reason: 'INVITE_NOT_SENT' };
     }
-    const hasPending = group.members.some((member) => member.attending == null);
+
+    const memberPending = group.members.some((member) => member.attending == null);
     const hasConfirmed = group.members.some((member) => member.attending === true);
-    const rsvpCompleted = group.members.length > 0 && !hasPending;
+    const partyPending =
+      group.invitedToParty &&
+      hasConfirmed &&
+      group.rsvpResponse?.partyAttending == null;
+    const hasPending = memberPending || partyPending;
+    const rsvpCompleted = group.members.length > 0 && !memberPending && !partyPending;
+    const partyConfirmed =
+      rsvpCompleted &&
+      hasConfirmed &&
+      group.invitedToParty &&
+      group.rsvpResponse?.partyAttending === true;
+
+    // Official templates containing reception details have an independent privacy gate.
+    // Even a mistakenly configured ALL/CUSTOM campaign cannot reveal the party address.
+    if (templateKey && PARTY_DETAIL_TEMPLATE_KEYS.has(templateKey) && !partyConfirmed) {
+      return { eligible: false, reason: 'PARTY_DETAILS_NOT_ALLOWED' };
+    }
 
     switch (campaign.audience) {
       case CommunicationAudience.ALL:
@@ -649,16 +866,11 @@ export class CommunicationsService implements OnModuleInit {
           ? { eligible: true }
           : { eligible: false, reason: 'NOT_CONFIRMED' };
       case CommunicationAudience.CEREMONY_ONLY_CONFIRMED:
-        // This is the privacy-safe ceremony-only communication bucket: confirmed guests
-        // who should NOT receive reception details, including guests invited to the party
-        // who declined it or have not confirmed the reception.
-        return rsvpCompleted &&
-          hasConfirmed &&
-          !(group.invitedToParty && group.rsvpResponse?.partyAttending === true)
+        return rsvpCompleted && hasConfirmed && !partyConfirmed
           ? { eligible: true }
           : { eligible: false, reason: 'NOT_CEREMONY_ONLY_CONFIRMED' };
       case CommunicationAudience.PARTY_CONFIRMED:
-        return rsvpCompleted && hasConfirmed && group.invitedToParty && group.rsvpResponse?.partyAttending === true
+        return partyConfirmed
           ? { eligible: true }
           : { eligible: false, reason: 'NOT_PARTY_CONFIRMED' };
       case CommunicationAudience.CUSTOM:
@@ -674,19 +886,35 @@ export class CommunicationsService implements OnModuleInit {
     template: { bodySingle: string; bodyGroup: string },
     group: CommunicationGroup,
   ) {
-    const appUrl = this.config.get<string>('APP_URL', 'https://tiagoegabriela.com.br').replace(/\/$/, '');
-    const pending = group.members.filter((member) => member.attending == null).map((member) => member.name);
-    const confirmed = group.members.filter((member) => member.attending === true).map((member) => member.name);
-    const declined = group.members.filter((member) => member.attending === false).map((member) => member.name);
-    const daysRemaining = Math.max(0, Math.ceil((WEDDING_AT.getTime() - Date.now()) / 86_400_000));
+    const appUrl = this.config
+      .get<string>('APP_URL', 'https://tiagoegabriela.com.br')
+      .replace(/\/$/, '');
+    const pending = group.members
+      .filter((member) => member.attending == null)
+      .map((member) => member.name);
+    const confirmed = group.members
+      .filter((member) => member.attending === true)
+      .map((member) => member.name);
+    const declined = group.members
+      .filter((member) => member.attending === false)
+      .map((member) => member.name);
+    const partyPending =
+      group.invitedToParty &&
+      confirmed.length > 0 &&
+      group.rsvpResponse?.partyAttending == null;
+    const pendingLabels = partyPending ? [...pending, 'confirmação da recepção'] : pending;
+    const daysRemaining = Math.max(
+      0,
+      Math.ceil((WEDDING_AT.getTime() - Date.now()) / 86_400_000),
+    );
     const body = group.members.length === 1 ? template.bodySingle : template.bodyGroup;
     const variables: Record<string, string> = {
       nome: group.displayName,
       pessoas: group.members.map((member) => member.name).join(', '),
-      pendentes: pending.join(', '),
+      pendentes: pendingLabels.join(', '),
       confirmados: confirmed.join(', '),
       nao_confirmados: declined.join(', '),
-      quantidade_pendentes: String(pending.length),
+      quantidade_pendentes: String(pendingLabels.length),
       dias_faltando: String(daysRemaining),
       link: `${appUrl}/?convite=${group.id}`,
       presentes: `${appUrl}/presentes?convite=${group.id}`,
@@ -718,6 +946,18 @@ export class CommunicationsService implements OnModuleInit {
     }).formatToParts(new Date());
     const hour = Number(parts.find((part) => part.type === 'hour')?.value ?? '0');
     return hour >= startHour && hour < endHour;
+  }
+
+  private async requirePreparedCampaign(id: string, previewedAt: Date | null) {
+    if (!previewedAt) {
+      throw new BadRequestException('Visualize o público antes de agendar/enviar a campanha');
+    }
+    const recipients = await this.prisma.communicationDelivery.count({
+      where: { campaignId: id, status: CommunicationDeliveryStatus.PENDING },
+    });
+    if (recipients === 0) {
+      throw new BadRequestException('O preview não possui nenhum destinatário elegível');
+    }
   }
 
   private async requireTemplate(id: string) {
