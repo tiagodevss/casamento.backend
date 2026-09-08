@@ -9,7 +9,10 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     this.$use(async (params: Prisma.MiddlewareParams, next) => {
       if (params.model === 'GuestGroup' && ['create', 'update', 'upsert'].includes(params.action)) {
         const normalizeData = (data?: Record<string, unknown>) => {
-          if (!data || !Object.prototype.hasOwnProperty.call(data, 'phone')) return;
+          // Prisma update payloads may contain `phone: undefined` when an unrelated field is
+          // changed. In that case the database keeps the current phone, so we must also keep
+          // the existing normalized value instead of accidentally clearing it.
+          if (!data || data.phone === undefined) return;
           const phone = typeof data.phone === 'string' ? data.phone : null;
           data.phoneNormalized = normalizeBrazilPhone(phone);
         };
