@@ -1,6 +1,6 @@
 # Cerimonialista digital - operação e deploy
 
-A cerimonialista digital usa o backend NestJS como fonte de verdade para convidados, RSVP, templates, campanhas, fila e histórico. O WPPConnect Server roda em um container separado e privado na mesma rede Docker.
+A cerimonialista digital usa o backend NestJS como fonte de verdade para convidados, RSVP, templates, campanhas, fila e histórico. O WPPConnect Server roda em um container separado, ligado apenas à rede `casamento-internal`; o backend participa dessa rede e também da rede externa do Traefik. Assim o WPPConnect continua com saída para a internet, mas não fica exposto aos demais serviços da rede compartilhada.
 
 ## Segurança operacional
 
@@ -9,7 +9,7 @@ A cerimonialista digital usa o backend NestJS como fonte de verdade para convida
 - O destinatário é revalidado imediatamente antes do envio. RSVP concluído, opt-out e cancelamento impedem o disparo mesmo se o destinatário já estava na fila.
 - A fila é persistida no PostgreSQL e possui unicidade por campanha + convite, evitando duplicidade após restart.
 - A janela padrão de envio é 09:00-20:00 em `America/Sao_Paulo`.
-- O WPPConnect não possui porta publicada no host/Traefik; apenas o backend fala com ele pela rede Docker.
+- O WPPConnect não possui porta publicada no host/Traefik e não participa da rede compartilhada `inboxflow-network`; apenas o backend o acessa pela bridge `casamento-internal`.
 - Automação via WPPConnect é não oficial e pode sofrer bloqueio pelo WhatsApp. O número deve ser dedicado ao casamento.
 
 ## Variáveis obrigatórias
