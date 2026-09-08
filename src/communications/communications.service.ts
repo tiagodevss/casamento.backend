@@ -124,10 +124,15 @@ export class CommunicationsService implements OnModuleInit {
   async updateTemplate(id: string, dto: UpdateCommunicationTemplateDto) {
     await this.requireTemplate(id);
 
-    // Pull scheduled campaigns back to draft before editing their copy. This closes the
-    // race where the scheduler could start a campaign while an operator changes a template.
+    // Invalidate every prepared campaign first. Any concurrent schedule/send operation
+    // uses updatedAt as an optimistic lock and will fail instead of dispatching old copy.
     await this.prisma.communicationCampaign.updateMany({
-      where: { templateId: id, status: CommunicationCampaignStatus.SCHEDULED },
+      where: {
+        templateId: id,
+        status: {
+          in: [CommunicationCampaignStatus.DRAFT, CommunicationCampaignStatus.SCHEDULED],
+        },
+      },
       data: { status: CommunicationCampaignStatus.DRAFT, previewedAt: null },
     });
 
@@ -152,10 +157,6 @@ export class CommunicationsService implements OnModuleInit {
           where: { campaignId: { in: campaignIds } },
         });
       }
-      await tx.communicationCampaign.updateMany({
-        where: { id: { in: campaignIds } },
-        data: { previewedAt: null, status: CommunicationCampaignStatus.DRAFT },
-      });
       return tx.communicationTemplate.update({
         where: { id },
         data: {
@@ -212,10 +213,13 @@ export class CommunicationsService implements OnModuleInit {
       throw new BadRequestException('Selecione ao menos um convite para uma campanha personalizada');
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      await tx.communicationDelivery.deleteMany({ where: { campaignId: id } });
-      return tx.communicationCampaign.update({
-        where: { id },
+    await this.prisma.$transaction(async (tx) => {
+      const locked = await tx.communicationCampaign.updateMany({
+        where: {
+          id,
+          status: campaign.status,
+          updatedAt: campaign.updatedAt,
+        },
         data: {
           name: dto.name?.trim(),
           templateId: dto.templateId,
@@ -226,34 +230,60 @@ export class CommunicationsService implements OnModuleInit {
           previewedAt: null,
           status: CommunicationCampaignStatus.DRAFT,
         },
-        include: { template: true },
       });
+      if (locked.count === 0) {
+        throw new BadRequestException(
+          'A campanha mudou enquanto estava sendo editada. Atualize a tela e tente novamente.',
+        );
+      }
+      await tx.communicationDelivery.deleteMany({ where: { campaignId: id } });
     });
+    return this.getCampaign(id);
   }
 
   async schedule(id: string, scheduledAt: Date) {
     const campaign = await this.requireEditableCampaign(id);
     await this.requireActiveTemplate(campaign.templateId);
     await this.requirePreparedCampaign(id, campaign.previewedAt);
-    return this.prisma.communicationCampaign.update({
-      where: { id },
+    const scheduled = await this.prisma.communicationCampaign.updateMany({
+      where: {
+        id,
+        status: campaign.status,
+        updatedAt: campaign.updatedAt,
+        previewedAt: { not: null },
+      },
       data: {
         scheduledAt,
         status: CommunicationCampaignStatus.SCHEDULED,
         cancelledAt: null,
       },
-      include: { template: true },
     });
+    if (scheduled.count === 0) {
+      throw new BadRequestException(
+        'A campanha mudou enquanto estava sendo agendada. Atualize a tela e revise o preview.',
+      );
+    }
+    return this.getCampaign(id);
   }
 
   async sendNow(id: string) {
     const campaign = await this.requireEditableCampaign(id);
     await this.requireActiveTemplate(campaign.templateId);
     await this.requirePreparedCampaign(id, campaign.previewedAt);
-    await this.prisma.communicationCampaign.update({
-      where: { id },
+    const scheduled = await this.prisma.communicationCampaign.updateMany({
+      where: {
+        id,
+        status: campaign.status,
+        updatedAt: campaign.updatedAt,
+        previewedAt: { not: null },
+      },
       data: { scheduledAt: new Date(), status: CommunicationCampaignStatus.SCHEDULED },
     });
+    if (scheduled.count === 0) {
+      throw new BadRequestException(
+        'A campanha mudou enquanto estava sendo enviada. Atualize a tela e revise o preview.',
+      );
+    }
     await this.startCampaign(id);
     return this.getCampaign(id);
   }
@@ -304,20 +334,24 @@ export class CommunicationsService implements OnModuleInit {
       throw new BadRequestException('O template desta campanha está inativo');
     }
 
-    // Any new preview revokes a prior schedule. The exact recipients and phones below are
-    // persisted as PENDING deliveries, so execution can only remove recipients, never add
-    // someone who was not reviewed by the operator.
-    await this.prisma.communicationCampaign.updateMany({
-      where: {
-        id,
-        status: { in: [CommunicationCampaignStatus.DRAFT, CommunicationCampaignStatus.SCHEDULED] },
-      },
-      data: { status: CommunicationCampaignStatus.DRAFT },
-    });
-
     const preview = await this.buildPreview(campaign);
     const previewedAt = new Date();
     await this.prisma.$transaction(async (tx) => {
+      // The campaign row itself is the optimistic lock. If a scheduler/admin changed it
+      // while the preview was being calculated, the entire snapshot transaction rolls back.
+      const locked = await tx.communicationCampaign.updateMany({
+        where: {
+          id,
+          status: campaign.status,
+          updatedAt: campaign.updatedAt,
+        },
+        data: { previewedAt, status: CommunicationCampaignStatus.DRAFT },
+      });
+      if (locked.count === 0) {
+        throw new BadRequestException(
+          'A campanha mudou durante o preview. Atualize a tela e visualize o público novamente.',
+        );
+      }
       await tx.communicationDelivery.deleteMany({ where: { campaignId: id } });
       if (preview.included.length > 0) {
         await tx.communicationDelivery.createMany({
@@ -329,10 +363,6 @@ export class CommunicationsService implements OnModuleInit {
           })),
         });
       }
-      await tx.communicationCampaign.update({
-        where: { id },
-        data: { previewedAt, status: CommunicationCampaignStatus.DRAFT },
-      });
     });
     return preview;
   }
@@ -494,6 +524,26 @@ export class CommunicationsService implements OnModuleInit {
     });
     if (claimed.count === 0) return;
 
+    const campaign = await this.prisma.communicationCampaign.findUnique({
+      where: { id },
+      include: { template: true },
+    });
+    if (!campaign) return;
+    if (!campaign.template.active) {
+      await this.prisma.$transaction([
+        this.prisma.communicationDelivery.deleteMany({ where: { campaignId: id } }),
+        this.prisma.communicationCampaign.update({
+          where: { id },
+          data: {
+            status: CommunicationCampaignStatus.DRAFT,
+            previewedAt: null,
+            startedAt: null,
+          },
+        }),
+      ]);
+      return;
+    }
+
     const deliveryCount = await this.prisma.communicationDelivery.count({
       where: { campaignId: id, status: CommunicationDeliveryStatus.PENDING },
     });
@@ -633,8 +683,6 @@ export class CommunicationsService implements OnModuleInit {
         },
       });
     } catch (error) {
-      // The provider already accepted the message. Never blindly retry this delivery: a
-      // restart recovery will mark the unknown result as FAILED instead of duplicating it.
       this.logger.error(
         `WhatsApp aceitou a entrega ${delivery.id}, mas o status não pôde ser persistido: ${String(error)}`,
       );
@@ -848,8 +896,6 @@ export class CommunicationsService implements OnModuleInit {
       group.invitedToParty &&
       group.rsvpResponse?.partyAttending === true;
 
-    // Official templates containing reception details have an independent privacy gate.
-    // Even a mistakenly configured ALL/CUSTOM campaign cannot reveal the party address.
     if (templateKey && PARTY_DETAIL_TEMPLATE_KEYS.has(templateKey) && !partyConfirmed) {
       return { eligible: false, reason: 'PARTY_DETAILS_NOT_ALLOWED' };
     }
