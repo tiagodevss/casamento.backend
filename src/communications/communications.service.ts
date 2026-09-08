@@ -123,9 +123,6 @@ export class CommunicationsService implements OnModuleInit {
 
   async updateTemplate(id: string, dto: UpdateCommunicationTemplateDto) {
     await this.requireTemplate(id);
-
-    // Invalidate every prepared campaign first. Any concurrent schedule/send operation
-    // uses updatedAt as an optimistic lock and will fail instead of dispatching old copy.
     await this.prisma.communicationCampaign.updateMany({
       where: {
         templateId: id,
@@ -337,8 +334,6 @@ export class CommunicationsService implements OnModuleInit {
     const preview = await this.buildPreview(campaign);
     const previewedAt = new Date();
     await this.prisma.$transaction(async (tx) => {
-      // The campaign row itself is the optimistic lock. If a scheduler/admin changed it
-      // while the preview was being calculated, the entire snapshot transaction rolls back.
       const locked = await tx.communicationCampaign.updateMany({
         where: {
           id,
@@ -530,17 +525,19 @@ export class CommunicationsService implements OnModuleInit {
     });
     if (!campaign) return;
     if (!campaign.template.active) {
-      await this.prisma.$transaction([
-        this.prisma.communicationDelivery.deleteMany({ where: { campaignId: id } }),
-        this.prisma.communicationCampaign.update({
-          where: { id },
+      await this.prisma.$transaction(async (tx) => {
+        const reset = await tx.communicationCampaign.updateMany({
+          where: { id, status: CommunicationCampaignStatus.PROCESSING },
           data: {
             status: CommunicationCampaignStatus.DRAFT,
             previewedAt: null,
             startedAt: null,
           },
-        }),
-      ]);
+        });
+        if (reset.count > 0) {
+          await tx.communicationDelivery.deleteMany({ where: { campaignId: id } });
+        }
+      });
       return;
     }
 
@@ -548,8 +545,8 @@ export class CommunicationsService implements OnModuleInit {
       where: { campaignId: id, status: CommunicationDeliveryStatus.PENDING },
     });
     if (deliveryCount === 0) {
-      await this.prisma.communicationCampaign.update({
-        where: { id },
+      await this.prisma.communicationCampaign.updateMany({
+        where: { id, status: CommunicationCampaignStatus.PROCESSING },
         data: { status: CommunicationCampaignStatus.COMPLETED, finishedAt: new Date() },
       });
     }
