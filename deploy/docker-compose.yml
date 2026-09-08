@@ -19,6 +19,28 @@ services:
     networks:
       - inboxflow-network
 
+  wppconnect:
+    image: wppconnect/wppconnect-server:${WPP_SERVER_TAG:-2.10.13}
+    container_name: casamento_wppconnect
+    restart: unless-stopped
+    environment:
+      SECRET_KEY: ${WPPCONNECT_SECRET}
+      WEBHOOK_URL: http://api:3000/api/whatsapp/webhook?secret=${WHATSAPP_WEBHOOK_SECRET}
+      TOKEN_STORE_TYPE: file
+      CUSTOM_USER_DATA_DIR: /usr/src/wpp-server/userDataDir
+      TZ: America/Sao_Paulo
+    volumes:
+      - casamento_wpp_tokens:/usr/src/wpp-server/tokens
+      - casamento_wpp_user_data:/usr/src/wpp-server/userDataDir
+      - casamento_wpp_logs:/usr/src/wpp-server/log
+    networks:
+      - inboxflow-network
+
+volumes:
+  casamento_wpp_tokens:
+  casamento_wpp_user_data:
+  casamento_wpp_logs:
+
 networks:
   inboxflow-network:
     external: true

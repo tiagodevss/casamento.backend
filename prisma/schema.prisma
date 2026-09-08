@@ -22,21 +22,28 @@ enum GuestSide {
 }
 
 model GuestGroup {
-  id             String        @id @default(uuid())
-  displayName    String
-  searchNames    String[]
-  side           GuestSide     @default(BOTH)
-  inviteSent     Boolean       @default(false)
-  invitedToParty Boolean       @default(false)
-  phone          String?
-  notes          String?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  members        GuestMember[]
-  rsvpResponse   RsvpResponse?
+  id                      String                  @id @default(uuid())
+  displayName             String
+  searchNames             String[]
+  side                    GuestSide               @default(BOTH)
+  inviteSent              Boolean                 @default(false)
+  invitedToParty          Boolean                 @default(false)
+  phone                   String?
+  phoneNormalized         String?
+  whatsappOptOut          Boolean                 @default(false)
+  whatsappOptOutAt        DateTime?
+  notes                   String?
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
+  members                 GuestMember[]
+  rsvpResponse            RsvpResponse?
+  communicationDeliveries CommunicationDelivery[]
+  whatsappMessages        WhatsAppMessage[]
 
   @@index([side])
   @@index([inviteSent])
+  @@index([phoneNormalized])
+  @@index([whatsappOptOut])
 }
 
 model GuestMember {
@@ -139,4 +146,117 @@ model AppSetting {
   value     String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+enum CommunicationCampaignStatus {
+  DRAFT
+  SCHEDULED
+  PROCESSING
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum CommunicationDeliveryStatus {
+  PENDING
+  PROCESSING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  SKIPPED
+}
+
+enum CommunicationAudience {
+  ALL
+  RSVP_PENDING
+  CONFIRMED
+  CEREMONY_ONLY_CONFIRMED
+  PARTY_CONFIRMED
+  CUSTOM
+}
+
+enum WhatsAppMessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+model CommunicationTemplate {
+  id          String                  @id @default(uuid())
+  key         String                  @unique
+  name        String
+  description String?
+  bodySingle  String
+  bodyGroup   String
+  active      Boolean                 @default(true)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  campaigns   CommunicationCampaign[]
+}
+
+model CommunicationCampaign {
+  id                   String                      @id @default(uuid())
+  name                 String
+  template             CommunicationTemplate       @relation(fields: [templateId], references: [id])
+  templateId           String
+  audience             CommunicationAudience       @default(ALL)
+  includeGuestGroupIds String[]                    @default([])
+  requireInviteSent    Boolean                     @default(true)
+  status               CommunicationCampaignStatus @default(DRAFT)
+  scheduledAt          DateTime?
+  previewedAt          DateTime?
+  startedAt            DateTime?
+  finishedAt           DateTime?
+  cancelledAt          DateTime?
+  createdAt            DateTime                    @default(now())
+  updatedAt            DateTime                    @updatedAt
+  deliveries           CommunicationDelivery[]
+
+  @@index([status, scheduledAt])
+  @@index([templateId])
+}
+
+model CommunicationDelivery {
+  id                String                      @id @default(uuid())
+  campaign          CommunicationCampaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId        String
+  guestGroup        GuestGroup                  @relation(fields: [guestGroupId], references: [id], onDelete: Cascade)
+  guestGroupId      String
+  phone             String
+  renderedMessage   String
+  status            CommunicationDeliveryStatus @default(PENDING)
+  attempts          Int                         @default(0)
+  providerMessageId String?
+  skippedReason     String?
+  lastError         String?
+  nextAttemptAt     DateTime?
+  queuedAt          DateTime                    @default(now())
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  failedAt          DateTime?
+  updatedAt         DateTime                    @updatedAt
+
+  @@unique([campaignId, guestGroupId])
+  @@index([status, nextAttemptAt])
+  @@index([providerMessageId])
+  @@index([guestGroupId])
+}
+
+model WhatsAppMessage {
+  id                String                   @id @default(uuid())
+  guestGroup        GuestGroup?              @relation(fields: [guestGroupId], references: [id], onDelete: SetNull)
+  guestGroupId      String?
+  direction         WhatsAppMessageDirection
+  phone             String
+  body              String
+  providerMessageId String?                  @unique
+  eventType         String?
+  needsHuman        Boolean                  @default(false)
+  resolvedAt        DateTime?
+  createdAt         DateTime                 @default(now())
+
+  @@index([guestGroupId, createdAt])
+  @@index([needsHuman, resolvedAt])
+  @@index([phone, createdAt])
 }

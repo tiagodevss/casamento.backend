@@ -11,4 +11,12 @@ export const envValidationSchema = Joi.object({
   APP_URL: Joi.string().uri().optional(),
   CORS_ORIGIN: Joi.string().allow('').default(''),
   UPLOADS_DIR: Joi.string().default('./uploads'),
+  WPPCONNECT_URL: Joi.string().uri().default('http://wppconnect:21465'),
+  WPPCONNECT_SESSION: Joi.string().default('casamento'),
+  WPPCONNECT_SECRET: Joi.string().allow('').default(''),
+  WPPCONNECT_WEBHOOK_URL: Joi.string().uri().default('http://api:3000/api/whatsapp/webhook'),
+  WHATSAPP_WEBHOOK_SECRET: Joi.string().allow('').default(''),
+  COMMUNICATION_TIMEZONE: Joi.string().default('America/Sao_Paulo'),
+  COMMUNICATION_WINDOW_START: Joi.number().integer().min(0).max(23).default(9),
+  COMMUNICATION_WINDOW_END: Joi.number().integer().min(1).max(24).default(20),
 });
