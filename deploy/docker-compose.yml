@@ -18,6 +18,7 @@ services:
       - traefik.http.services.casamento-api.loadbalancer.server.port=3000
     networks:
       - inboxflow-network
+      - casamento-internal
 
   wppconnect:
     image: wppconnect/wppconnect-server:${WPP_SERVER_TAG:-2.10.13}
@@ -34,7 +35,7 @@ services:
       - casamento_wpp_user_data:/usr/src/wpp-server/userDataDir
       - casamento_wpp_logs:/usr/src/wpp-server/log
     networks:
-      - inboxflow-network
+      - casamento-internal
 
 volumes:
   casamento_wpp_tokens:
@@ -44,3 +45,5 @@ volumes:
 networks:
   inboxflow-network:
     external: true
+  casamento-internal:
+    driver: bridge
