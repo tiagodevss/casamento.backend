@@ -23,9 +23,9 @@ export const envValidationSchema = Joi.object({
   WHATSAPP_WEBHOOK_SECRET: Joi.when('NODE_ENV', {
     is: 'production',
     then: Joi.string()
-      .min(24)
+      .min(32)
       .pattern(/^[A-Za-z0-9_-]+$/)
-      .invalid('change_me_webhook_secret_32_chars_min')
+      .invalid('change-me-webhook-secret', 'change_me_webhook_secret_32_chars_min')
       .required(),
     otherwise: Joi.string().allow('').pattern(/^[A-Za-z0-9_-]+$/).default(''),
   }),
@@ -40,7 +40,24 @@ export const envValidationSchema = Joi.object({
     value.NODE_ENV === 'production' &&
     value.WPPCONNECT_SECRET === value.WHATSAPP_WEBHOOK_SECRET
   ) {
-    return helpers.error('any.invalid');
+    return helpers.message({ custom: 'WPPCONNECT_SECRET e WHATSAPP_WEBHOOK_SECRET precisam ser diferentes' });
   }
+
+  if (Number(value.COMMUNICATION_WINDOW_START) >= Number(value.COMMUNICATION_WINDOW_END)) {
+    return helpers.message({
+      custom: 'COMMUNICATION_WINDOW_START precisa ser menor que COMMUNICATION_WINDOW_END',
+    });
+  }
+
+  try {
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: value.COMMUNICATION_TIMEZONE,
+    }).format(new Date());
+  } catch {
+    return helpers.message({
+      custom: 'COMMUNICATION_TIMEZONE precisa ser um timezone IANA válido',
+    });
+  }
+
   return value;
-}, 'WhatsApp secrets must be distinct');
+}, 'Runtime configuration validation');
