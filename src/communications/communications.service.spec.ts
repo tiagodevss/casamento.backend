@@ -4,6 +4,7 @@ import {
   CommunicationDeliveryStatus,
 } from '@prisma/client';
 import { CommunicationsService } from './communications.service';
+import { WhatsAppAmbiguousSendError } from '../whatsapp/whatsapp-provider.interface';
 
 function group(overrides: Record<string, unknown> = {}) {
   return {
@@ -374,5 +375,99 @@ describe('CommunicationsService reviewed delivery behavior', () => {
       },
       data: { resolvedAt: expect.any(Date), needsHuman: false },
     });
+  });
+});
+
+
+describe('CommunicationsService failure semantics', () => {
+  it('never automatically retries an ambiguous transport result', async () => {
+    const guest = group();
+    const delivery = {
+      id: 'delivery-ambiguous',
+      campaignId: 'campaign-1',
+      guestGroupId: guest.id,
+      phone: guest.phoneNormalized,
+      renderedMessage: 'Mensagem aprovada',
+      status: CommunicationDeliveryStatus.PROCESSING,
+      attempts: 0,
+      campaign: {
+        id: 'campaign-1',
+        status: CommunicationCampaignStatus.PROCESSING,
+        audience: CommunicationAudience.ALL,
+        includeGuestGroupIds: [],
+        requireInviteSent: true,
+        template: { key: 'INTRO', active: true },
+      },
+      guestGroup: guest,
+    };
+    const prisma = {
+      communicationDelivery: {
+        findUnique: jest.fn().mockResolvedValue(delivery),
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        count: jest.fn().mockResolvedValueOnce(0).mockResolvedValueOnce(1),
+      },
+      communicationCampaign: {
+        findUnique: jest.fn().mockResolvedValue({
+          status: CommunicationCampaignStatus.PROCESSING,
+        }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      guestGroup: {
+        count: jest.fn().mockResolvedValue(1),
+      },
+    };
+    const whatsapp = {
+      sendText: jest
+        .fn()
+        .mockRejectedValue(new WhatsAppAmbiguousSendError('timeout após envio')),
+    };
+    const service = new CommunicationsService(prisma as any, whatsapp as any, {} as any);
+
+    await (service as any).processDelivery('delivery-ambiguous');
+
+    expect(prisma.communicationDelivery.update).toHaveBeenCalledWith({
+      where: { id: 'delivery-ambiguous' },
+      data: expect.objectContaining({
+        status: CommunicationDeliveryStatus.FAILED,
+        nextAttemptAt: null,
+        lastError: expect.stringContaining('UNCERTAIN_SEND:'),
+      }),
+    });
+  });
+
+  it('rolls back template edits if a campaign starts processing during invalidation', async () => {
+    const tx = {
+      communicationCampaign: {
+        count: jest.fn().mockResolvedValueOnce(0).mockResolvedValueOnce(1),
+        findMany: jest.fn().mockResolvedValue([{ id: 'campaign-1' }]),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      communicationDelivery: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      communicationTemplate: {
+        update: jest.fn(),
+      },
+    };
+    const prisma = {
+      communicationTemplate: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'template-1' }),
+      },
+      $transaction: jest.fn(async (callback: any) => callback(tx)),
+    };
+    const service = new CommunicationsService(prisma as any, {} as any, {} as any);
+
+    await expect(
+      service.updateTemplate('template-1', {
+        name: 'Template',
+        description: '',
+        bodySingle: 'Oi',
+        bodyGroup: 'Olá',
+        active: true,
+      }),
+    ).rejects.toThrow('começou a ser processada durante a edição');
+
+    expect(tx.communicationTemplate.update).not.toHaveBeenCalled();
   });
 });
