@@ -395,9 +395,6 @@ export class CommunicationsService implements OnModuleInit {
     if (!campaign.template.active) {
       throw new BadRequestException('O template desta campanha está inativo');
     }
-    if (campaign.expiresAt && campaign.expiresAt.getTime() <= Date.now()) {
-      throw new BadRequestException('Esta campanha já expirou. Ajuste a validade antes de gerar outro preview.');
-    }
     this.assertTemplatePrivacy(campaign.template);
 
     const preview = await this.buildPreview(campaign);
