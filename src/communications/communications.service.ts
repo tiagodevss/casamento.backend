@@ -710,7 +710,9 @@ export class CommunicationsService implements OnModuleInit {
       return;
     }
 
-    const message = delivery.renderedMessage;
+    // Recipient/phone and template version were approved during preview. Dynamic guest
+    // variables are rendered again so RSVP reminders never mention people who have since replied.
+    const message = this.render(delivery.campaign.template, delivery.guestGroup);
     const currentCampaign = await this.prisma.communicationCampaign.findUnique({
       where: { id: delivery.campaignId },
       select: { status: true },
