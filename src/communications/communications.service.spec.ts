@@ -405,7 +405,12 @@ describe('CommunicationsService failure semantics', () => {
         audience: CommunicationAudience.ALL,
         includeGuestGroupIds: [],
         requireInviteSent: true,
-        template: { key: 'INTRO', active: true },
+        template: {
+          key: 'INTRO',
+          active: true,
+          bodySingle: 'Mensagem aprovada',
+          bodyGroup: 'Mensagem aprovada',
+        },
       },
       guestGroup: guest,
     };
