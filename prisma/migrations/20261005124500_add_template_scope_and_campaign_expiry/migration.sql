@@ -12,7 +12,13 @@ ADD COLUMN IF NOT EXISTS "scope" "CommunicationTemplateScope" NOT NULL DEFAULT '
 
 UPDATE "CommunicationTemplate"
 SET "scope" = 'PARTY'
-WHERE "key" IN ('INFO_PARTY', 'WEEK_PARTY', 'TOMORROW_PARTY', 'TODAY_PARTY');
+WHERE "key" IN ('INFO_PARTY', 'WEEK_PARTY', 'TOMORROW_PARTY', 'TODAY_PARTY')
+   OR "bodySingle" LIKE '%{{maps_festa}}%'
+   OR "bodyGroup" LIKE '%{{maps_festa}}%'
+   OR "bodySingle" LIKE '%{{endereco_festa}}%'
+   OR "bodyGroup" LIKE '%{{endereco_festa}}%'
+   OR "bodySingle" ILIKE '%Praxiteles F. Neves%'
+   OR "bodyGroup" ILIKE '%Praxiteles F. Neves%';
 
 ALTER TABLE "CommunicationCampaign"
 ADD COLUMN IF NOT EXISTS "expiresAt" TIMESTAMP(3);
@@ -38,6 +44,13 @@ END
 FROM "CommunicationTemplate" t
 WHERE c."templateId" = t."id"
   AND c."expiresAt" IS NULL;
+
+-- Existing custom campaigns that already have a scheduledAt also receive a conservative
+-- 12-hour validity window so they cannot remain stuck forever with expiresAt = NULL.
+UPDATE "CommunicationCampaign"
+SET "expiresAt" = "scheduledAt" + INTERVAL '12 hours'
+WHERE "expiresAt" IS NULL
+  AND "scheduledAt" IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS "CommunicationCampaign_status_expiresAt_idx"
 ON "CommunicationCampaign"("status", "expiresAt");
