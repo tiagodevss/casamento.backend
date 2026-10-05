@@ -1,0 +1,7 @@
+ARG WPP_SERVER_TAG=2.10.13
+FROM wppconnect/wppconnect-server:${WPP_SERVER_TAG}
+
+# WPPConnect habilita autoDownload por padrão e injeta a mídia completa em base64
+# no webhook. Para este bot, basta receber metadados/caption e encaminhar mídia
+# para atendimento humano. Falhe o build se o layout upstream mudar.
+RUN node -e "const fs=require('fs'); const p='/usr/src/wpp-server/dist/config.js'; let s=fs.readFileSync(p,'utf8'); const before=s; s=s.replace('autoDownload: true','autoDownload: false'); if(s===before){throw new Error('WPPConnect autoDownload config not found');} fs.writeFileSync(p,s);"
