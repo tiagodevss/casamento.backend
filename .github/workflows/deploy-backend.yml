@@ -112,3 +112,23 @@ jobs:
             echo "Health check failed"
             docker logs casamento_api --tail 100
             exit 1
+
+      - name: Verify WhatsApp webhook relay
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            for attempt in $(seq 1 20); do
+              status=$(docker inspect --format='{{.State.Health.Status}}' casamento_webhook_relay 2>/dev/null || true)
+              if [ "$status" = "healthy" ]; then
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "Webhook relay health check failed"
+            docker logs casamento_webhook_relay --tail 100
+            exit 1
