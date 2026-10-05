@@ -20,22 +20,49 @@ services:
       - inboxflow-network
       - casamento-internal
 
+  webhook-relay:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.webhook-relay
+    image: casamento-webhook-relay:latest
+    container_name: casamento_webhook_relay
+    restart: unless-stopped
+    environment:
+      PORT: 8080
+      QUEUE_DIR: /data/queue
+      WEBHOOK_SECRET: ${WHATSAPP_WEBHOOK_SECRET}
+      BACKEND_WEBHOOK_URL: http://api:3000/api/whatsapp/webhook?secret=${WHATSAPP_WEBHOOK_SECRET}
+      MAX_BODY_BYTES: 2097152
+      RETRY_MS: 3000
+    volumes:
+      - casamento_wpp_webhook_queue:/data/queue
+    networks:
+      - casamento-internal
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   wppconnect:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.wppconnect
       args:
-        WPP_SERVER_TAG: ${WPP_SERVER_TAG:-2.10.13}
-    image: casamento-wppconnect:${WPP_SERVER_TAG:-2.10.13}
+        WPP_SERVER_TAG: ${WPP_SERVER_TAG:-2.10.36}
+    image: casamento-wppconnect:${WPP_SERVER_TAG:-2.10.36}
     container_name: casamento_wppconnect
     restart: unless-stopped
     environment:
       SECRET_KEY: ${WPPCONNECT_SECRET}
-      WEBHOOK_URL: http://api:3000/api/whatsapp/webhook?secret=${WHATSAPP_WEBHOOK_SECRET}
+      WEBHOOK_URL: http://webhook-relay:8080/webhook?secret=${WHATSAPP_WEBHOOK_SECRET}
       TOKEN_STORE_TYPE: file
       # WPPConnect concatena CUSTOM_USER_DATA_DIR + nome_da_sessao; a barra final é obrigatória.
       CUSTOM_USER_DATA_DIR: /usr/src/wpp-server/userDataDir/
       TZ: America/Sao_Paulo
+    depends_on:
+      webhook-relay:
+        condition: service_healthy
     volumes:
       - casamento_wpp_tokens:/usr/src/wpp-server/tokens
       - casamento_wpp_user_data:/usr/src/wpp-server/userDataDir
@@ -44,6 +71,7 @@ services:
       - casamento-internal
 
 volumes:
+  casamento_wpp_webhook_queue:
   casamento_wpp_tokens:
   casamento_wpp_user_data:
   casamento_wpp_logs:
