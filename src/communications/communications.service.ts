@@ -11,6 +11,7 @@ import {
   CommunicationAudience,
   CommunicationCampaignStatus,
   CommunicationDeliveryStatus,
+  CommunicationTemplateScope,
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -33,12 +34,14 @@ const CEREMONY_MAPS =
 const PARTY_MAPS = 'https://maps.app.goo.gl/xCx15d8vKrzTXubV8';
 const STALE_PROCESSING_MS = 2 * 60_000;
 const UNCERTAIN_SEND_PREFIX = 'UNCERTAIN_SEND:';
-const PARTY_DETAIL_TEMPLATE_KEYS = new Set([
-  'INFO_PARTY',
-  'WEEK_PARTY',
-  'TOMORROW_PARTY',
-  'TODAY_PARTY',
-]);
+const PARTY_SENSITIVE_MARKERS = [
+  '{{maps_festa}}',
+  '{{endereco_festa}}',
+  '{{local_festa}}',
+  '{{horario_festa}}',
+  'Rua Praxiteles F. Neves',
+  'maps.app.goo.gl/xCx15d8vKrzTXubV8',
+];
 
 const groupInclude = {
   members: { orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }] },
@@ -116,6 +119,7 @@ export class CommunicationsService implements OnModuleInit {
             new Date(item.suggestedAt).getTime() > Date.now()
               ? new Date(item.suggestedAt)
               : null,
+          expiresAt: new Date(item.expiresAt),
           status: CommunicationCampaignStatus.DRAFT,
         },
       });
@@ -127,7 +131,13 @@ export class CommunicationsService implements OnModuleInit {
   }
 
   async updateTemplate(id: string, dto: UpdateCommunicationTemplateDto) {
-    await this.requireTemplate(id);
+    const existingTemplate = await this.requireTemplate(id);
+    const nextScope = dto.scope ?? existingTemplate.scope;
+    this.assertTemplatePrivacy({
+      scope: nextScope,
+      bodySingle: dto.bodySingle,
+      bodyGroup: dto.bodyGroup,
+    });
 
     return this.prisma.$transaction(async (tx) => {
       const processing = await tx.communicationCampaign.count({
@@ -177,6 +187,7 @@ export class CommunicationsService implements OnModuleInit {
           description: dto.description?.trim() || null,
           bodySingle: dto.bodySingle.trim(),
           bodyGroup: dto.bodyGroup.trim(),
+          scope: dto.scope,
           active: dto.active,
         },
       });
@@ -201,7 +212,14 @@ export class CommunicationsService implements OnModuleInit {
 
   async createCampaign(dto: CreateCommunicationCampaignDto) {
     await this.requireTemplate(dto.templateId);
-    if (dto.scheduledAt) this.assertFutureSchedule(new Date(dto.scheduledAt));
+    const scheduledAt = dto.scheduledAt ? new Date(dto.scheduledAt) : null;
+    const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : null;
+    if (scheduledAt) {
+      this.assertFutureSchedule(scheduledAt);
+      this.assertWithinSendWindow(scheduledAt);
+    }
+    if (expiresAt) this.assertFutureExpiry(expiresAt);
+    if (scheduledAt && expiresAt) this.assertExpiryAfterSchedule(expiresAt, scheduledAt);
     if (dto.audience === CommunicationAudience.CUSTOM && !(dto.includeGuestGroupIds?.length)) {
       throw new BadRequestException('Selecione ao menos um convite para uma campanha personalizada');
     }
@@ -212,7 +230,8 @@ export class CommunicationsService implements OnModuleInit {
         audience: dto.audience,
         includeGuestGroupIds: dto.includeGuestGroupIds ?? [],
         requireInviteSent: dto.requireInviteSent ?? true,
-        scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : null,
+        scheduledAt,
+        expiresAt,
       },
       include: { template: true },
     });
@@ -221,6 +240,14 @@ export class CommunicationsService implements OnModuleInit {
   async updateCampaign(id: string, dto: UpdateCommunicationCampaignDto) {
     const campaign = await this.requireEditableCampaign(id);
     if (dto.templateId) await this.requireTemplate(dto.templateId);
+    const nextScheduledAt = dto.scheduledAt ? new Date(dto.scheduledAt) : campaign.scheduledAt;
+    const nextExpiresAt = dto.expiresAt ? new Date(dto.expiresAt) : campaign.expiresAt;
+    if (dto.scheduledAt) {
+      this.assertFutureSchedule(nextScheduledAt!);
+      this.assertWithinSendWindow(nextScheduledAt!);
+    }
+    if (dto.expiresAt) this.assertFutureExpiry(nextExpiresAt!);
+    if (nextScheduledAt && nextExpiresAt) this.assertExpiryAfterSchedule(nextExpiresAt, nextScheduledAt);
     const audience = dto.audience ?? campaign.audience;
     const ids = dto.includeGuestGroupIds ?? campaign.includeGuestGroupIds;
     if (audience === CommunicationAudience.CUSTOM && ids.length === 0) {
@@ -241,6 +268,7 @@ export class CommunicationsService implements OnModuleInit {
           includeGuestGroupIds: dto.includeGuestGroupIds,
           requireInviteSent: dto.requireInviteSent,
           scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : undefined,
+          expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : undefined,
           previewedAt: null,
           status: CommunicationCampaignStatus.DRAFT,
         },
@@ -255,9 +283,16 @@ export class CommunicationsService implements OnModuleInit {
     return this.getCampaign(id);
   }
 
-  async schedule(id: string, scheduledAt: Date) {
+  async schedule(id: string, scheduledAt: Date, expiresAt?: Date) {
     this.assertFutureSchedule(scheduledAt);
+    this.assertWithinSendWindow(scheduledAt);
     const campaign = await this.requireEditableCampaign(id);
+    const effectiveExpiry = expiresAt ?? campaign.expiresAt;
+    if (!effectiveExpiry) {
+      throw new BadRequestException('Defina até quando esta campanha pode ser enviada');
+    }
+    this.assertFutureExpiry(effectiveExpiry);
+    this.assertExpiryAfterSchedule(effectiveExpiry, scheduledAt);
     await this.requireActiveTemplate(campaign.templateId);
     await this.requirePreparedCampaign(id, campaign.previewedAt);
     const scheduled = await this.prisma.communicationCampaign.updateMany({
@@ -269,6 +304,7 @@ export class CommunicationsService implements OnModuleInit {
       },
       data: {
         scheduledAt,
+        expiresAt: effectiveExpiry,
         status: CommunicationCampaignStatus.SCHEDULED,
         cancelledAt: null,
       },
@@ -283,6 +319,12 @@ export class CommunicationsService implements OnModuleInit {
 
   async sendNow(id: string) {
     const campaign = await this.requireEditableCampaign(id);
+    const now = new Date();
+    this.assertWithinSendWindow(now);
+    if (!campaign.expiresAt) {
+      throw new BadRequestException('Defina a validade da campanha antes de enviar');
+    }
+    this.assertFutureExpiry(campaign.expiresAt);
     await this.requireActiveTemplate(campaign.templateId);
     await this.requirePreparedCampaign(id, campaign.previewedAt);
     const scheduled = await this.prisma.communicationCampaign.updateMany({
@@ -348,6 +390,10 @@ export class CommunicationsService implements OnModuleInit {
     if (!campaign.template.active) {
       throw new BadRequestException('O template desta campanha está inativo');
     }
+    if (campaign.expiresAt && campaign.expiresAt.getTime() <= Date.now()) {
+      throw new BadRequestException('Esta campanha já expirou. Ajuste a validade antes de gerar outro preview.');
+    }
+    this.assertTemplatePrivacy(campaign.template);
 
     const preview = await this.buildPreview(campaign);
     const previewedAt = new Date();
@@ -559,11 +605,14 @@ export class CommunicationsService implements OnModuleInit {
     if (this.schedulerBusy) return;
     this.schedulerBusy = true;
     try {
+      await this.expireDueCampaigns();
+      const now = new Date();
       const due = await this.prisma.communicationCampaign.findMany({
         where: {
           status: CommunicationCampaignStatus.SCHEDULED,
           previewedAt: { not: null },
-          scheduledAt: { lte: new Date() },
+          scheduledAt: { lte: now },
+          expiresAt: { gt: now },
         },
         select: { id: true },
         orderBy: { scheduledAt: 'asc' },
@@ -578,11 +627,13 @@ export class CommunicationsService implements OnModuleInit {
   }
 
   private async startCampaign(id: string) {
+    const now = new Date();
     const claimed = await this.prisma.communicationCampaign.updateMany({
       where: {
         id,
         status: CommunicationCampaignStatus.SCHEDULED,
         previewedAt: { not: null },
+        expiresAt: { gt: now },
       },
       data: { status: CommunicationCampaignStatus.PROCESSING, startedAt: new Date() },
     });
@@ -626,6 +677,7 @@ export class CommunicationsService implements OnModuleInit {
     if (this.workerBusy || !this.isWithinSendWindow()) return;
     this.workerBusy = true;
     try {
+      await this.expireDueCampaigns();
       let connection;
       try {
         connection = await this.whatsapp.status();
@@ -639,7 +691,10 @@ export class CommunicationsService implements OnModuleInit {
         where: {
           status: CommunicationDeliveryStatus.PENDING,
           OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
-          campaign: { status: CommunicationCampaignStatus.PROCESSING },
+          campaign: {
+            status: CommunicationCampaignStatus.PROCESSING,
+            expiresAt: { gt: now },
+          },
         },
         orderBy: { queuedAt: 'asc' },
       });
@@ -703,7 +758,7 @@ export class CommunicationsService implements OnModuleInit {
     const eligibility = this.evaluateEligibility(
       delivery.guestGroup,
       delivery.campaign,
-      delivery.campaign.template.key,
+      delivery.campaign.template.scope,
     );
     if ('reason' in eligibility) {
       await this.skipDelivery(delivery.id, delivery.campaignId, eligibility.reason);
@@ -715,14 +770,22 @@ export class CommunicationsService implements OnModuleInit {
     const message = this.render(delivery.campaign.template, delivery.guestGroup);
     const currentCampaign = await this.prisma.communicationCampaign.findUnique({
       where: { id: delivery.campaignId },
-      select: { status: true },
+      select: { status: true, expiresAt: true },
     });
-    if (currentCampaign?.status !== CommunicationCampaignStatus.PROCESSING) {
+    if (
+      currentCampaign?.status !== CommunicationCampaignStatus.PROCESSING ||
+      !currentCampaign.expiresAt ||
+      currentCampaign.expiresAt.getTime() <= Date.now()
+    ) {
       await this.prisma.communicationDelivery.updateMany({
         where: { id: delivery.id, status: CommunicationDeliveryStatus.PROCESSING },
         data: {
           status: CommunicationDeliveryStatus.SKIPPED,
-          skippedReason: 'CAMPAIGN_CANCELLED_BEFORE_SEND',
+          skippedReason:
+            currentCampaign?.status === CommunicationCampaignStatus.EXPIRED ||
+            (currentCampaign?.expiresAt && currentCampaign.expiresAt.getTime() <= Date.now())
+              ? 'CAMPAIGN_EXPIRED'
+              : 'CAMPAIGN_CANCELLED_BEFORE_SEND',
         },
       });
       return;
@@ -921,7 +984,7 @@ export class CommunicationsService implements OnModuleInit {
     const excluded: PreviewExcluded[] = [];
     for (const group of groups) {
       const phone = group.phoneNormalized ?? normalizeBrazilPhone(group.phone);
-      const eligibility = this.evaluateEligibility(group, campaign, campaign.template.key);
+      const eligibility = this.evaluateEligibility(group, campaign, campaign.template.scope);
       if ('reason' in eligibility) {
         excluded.push({
           guestGroupId: group.id,
@@ -966,7 +1029,7 @@ export class CommunicationsService implements OnModuleInit {
       CampaignWithTemplate,
       'audience' | 'includeGuestGroupIds' | 'requireInviteSent'
     >,
-    templateKey?: string,
+    templateScope: CommunicationTemplateScope = CommunicationTemplateScope.GENERAL,
   ): EligibilityResult {
     const phone = group.phoneNormalized ?? normalizeBrazilPhone(group.phone);
     if (!phone) return { eligible: false, reason: 'NO_VALID_PHONE' };
@@ -989,7 +1052,7 @@ export class CommunicationsService implements OnModuleInit {
       group.invitedToParty &&
       group.rsvpResponse?.partyAttending === true;
 
-    if (templateKey && PARTY_DETAIL_TEMPLATE_KEYS.has(templateKey) && !partyConfirmed) {
+    if (templateScope === CommunicationTemplateScope.PARTY && !partyConfirmed) {
       return { eligible: false, reason: 'PARTY_DETAILS_NOT_ALLOWED' };
     }
 
@@ -1074,7 +1137,7 @@ export class CommunicationsService implements OnModuleInit {
     });
   }
 
-  private isWithinSendWindow() {
+  private isWithinSendWindow(value = new Date()) {
     const timeZone = this.config.get<string>('COMMUNICATION_TIMEZONE', 'America/Sao_Paulo');
     const startHour = Number(this.config.get<string>('COMMUNICATION_WINDOW_START', '9'));
     const endHour = Number(this.config.get<string>('COMMUNICATION_WINDOW_END', '20'));
@@ -1082,9 +1145,103 @@ export class CommunicationsService implements OnModuleInit {
       timeZone,
       hour: '2-digit',
       hourCycle: 'h23',
-    }).formatToParts(new Date());
+    }).formatToParts(value);
     const hour = Number(parts.find((part) => part.type === 'hour')?.value ?? '0');
     return hour >= startHour && hour < endHour;
+  }
+
+  private assertWithinSendWindow(value: Date) {
+    if (!this.isWithinSendWindow(value)) {
+      const start = this.config.get<string>('COMMUNICATION_WINDOW_START', '9');
+      const end = this.config.get<string>('COMMUNICATION_WINDOW_END', '20');
+      throw new BadRequestException(
+        `Escolha um horário entre ${start}:00 e ${end}:00 na janela de comunicação`,
+      );
+    }
+  }
+
+  private assertFutureExpiry(value: Date) {
+    if (!Number.isFinite(value.getTime()) || value.getTime() <= Date.now()) {
+      throw new BadRequestException('A validade da campanha precisa estar no futuro');
+    }
+  }
+
+  private assertExpiryAfterSchedule(expiresAt: Date, scheduledAt: Date) {
+    if (expiresAt.getTime() <= scheduledAt.getTime()) {
+      throw new BadRequestException('A validade precisa ser posterior ao horário agendado');
+    }
+  }
+
+  private containsPartySensitiveContent(template: { bodySingle: string; bodyGroup: string }) {
+    const body = `${template.bodySingle}\n${template.bodyGroup}`;
+    return PARTY_SENSITIVE_MARKERS.some((marker) => body.includes(marker));
+  }
+
+  private assertTemplatePrivacy(template: {
+    scope: CommunicationTemplateScope;
+    bodySingle: string;
+    bodyGroup: string;
+  }) {
+    if (
+      template.scope !== CommunicationTemplateScope.PARTY &&
+      this.containsPartySensitiveContent(template)
+    ) {
+      throw new BadRequestException(
+        'Templates com informações ou variáveis da festa precisam usar o escopo PARTY',
+      );
+    }
+  }
+
+  private async expireDueCampaigns() {
+    const now = new Date();
+    const expired = await this.prisma.communicationCampaign.findMany({
+      where: {
+        status: {
+          in: [
+            CommunicationCampaignStatus.SCHEDULED,
+            CommunicationCampaignStatus.PROCESSING,
+          ],
+        },
+        expiresAt: { lte: now },
+      },
+      select: { id: true },
+      take: 100,
+    });
+    if (expired.length === 0) return;
+
+    const ids = expired.map((item) => item.id);
+    await this.prisma.$transaction([
+      this.prisma.communicationCampaign.updateMany({
+        where: {
+          id: { in: ids },
+          status: {
+            in: [
+              CommunicationCampaignStatus.SCHEDULED,
+              CommunicationCampaignStatus.PROCESSING,
+            ],
+          },
+        },
+        data: {
+          status: CommunicationCampaignStatus.EXPIRED,
+          finishedAt: now,
+        },
+      }),
+      this.prisma.communicationDelivery.updateMany({
+        where: {
+          campaignId: { in: ids },
+          status: {
+            in: [
+              CommunicationDeliveryStatus.PENDING,
+              CommunicationDeliveryStatus.PROCESSING,
+            ],
+          },
+        },
+        data: {
+          status: CommunicationDeliveryStatus.SKIPPED,
+          skippedReason: 'CAMPAIGN_EXPIRED',
+        },
+      }),
+    ]);
   }
 
   private assertFutureSchedule(value: Date) {
