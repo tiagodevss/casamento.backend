@@ -13,6 +13,7 @@ import {
 
 const STOP_WORDS = new Set(['parar', 'sair', 'stop', 'cancelar mensagens']);
 const MENU_WORDS = new Set(['oi', 'ola', 'olá', 'menu', 'inicio', 'início', 'ajuda']);
+const MEDIA_TYPES = new Set(['audio', 'ptt', 'image', 'video', 'document', 'sticker', 'gif']);
 const DELIVERY_RANK: Partial<Record<CommunicationDeliveryStatus, number>> = {
   [CommunicationDeliveryStatus.SENT]: 1,
   [CommunicationDeliveryStatus.DELIVERED]: 2,
@@ -114,10 +115,11 @@ export class WhatsAppService {
     const body = typeof data.body === 'string' ? data.body.trim() : '';
     const isFromMe = Boolean(data.isSentByMe ?? data.fromMe);
     const isGroup = from.includes('@g.us') || Boolean(data.isGroupMsg);
+    const isMedia = this.isMediaMessage(data);
 
-    if (body && from && !isFromMe && !isGroup) {
-      await this.handleIncoming(data, event || 'onmessage');
-      return { ok: true, handled: 'message' };
+    if ((body || isMedia) && from && !isFromMe && !isGroup) {
+      await this.handleIncoming(data, event || 'onmessage', isMedia);
+      return { ok: true, handled: isMedia ? 'media' : 'message' };
     }
 
     return { ok: true, handled: 'ignored' };
@@ -170,7 +172,34 @@ export class WhatsAppService {
     });
   }
 
-  private async handleIncoming(data: Record<string, any>, eventType: string) {
+  private isMediaMessage(data: Record<string, any>) {
+    const type = String(data.type ?? '').toLowerCase();
+    return Boolean(data.isMedia || data.isMMS || data.mimetype || MEDIA_TYPES.has(type));
+  }
+
+  private mediaSummary(data: Record<string, any>) {
+    const type = String(data.type ?? '').toLowerCase();
+    const label =
+      type === 'ptt' || type === 'audio'
+        ? 'Áudio'
+        : type === 'image'
+          ? 'Imagem'
+          : type === 'video'
+            ? 'Vídeo'
+            : type === 'document'
+              ? 'Documento'
+              : type === 'sticker'
+                ? 'Figurinha'
+                : 'Mídia';
+    const caption = typeof data.caption === 'string' ? data.caption.trim().slice(0, 500) : '';
+    return caption ? `[${label} recebido] ${caption}` : `[${label} recebido]`;
+  }
+
+  private async handleIncoming(
+    data: Record<string, any>,
+    eventType: string,
+    isMedia = false,
+  ) {
     const sender = asRecord(data.sender);
     const phoneCandidates = [
       data.from,
@@ -185,8 +214,8 @@ export class WhatsAppService {
         .find(Boolean) ?? null;
     if (!phone) return;
 
-    const body = String(data.body ?? '').trim();
-    const normalizedBody = body.toLocaleLowerCase('pt-BR').trim();
+    const body = isMedia ? this.mediaSummary(data) : String(data.body ?? '').trim();
+    const normalizedBody = isMedia ? '' : body.toLocaleLowerCase('pt-BR').trim();
     const providerMessageId = extractProviderId(data);
     const guestInclude = {
       members: { orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }] },
@@ -214,7 +243,7 @@ export class WhatsAppService {
       select: { id: true },
     });
     const requestedHuman = normalizedBody === '4';
-    const needsHuman = Boolean(pendingHandoff) || requestedHuman || ambiguous;
+    const needsHuman = Boolean(pendingHandoff) || requestedHuman || ambiguous || isMedia;
 
     try {
       await this.prisma.whatsAppMessage.create({
@@ -224,7 +253,7 @@ export class WhatsAppService {
           phone,
           body,
           providerMessageId,
-          eventType,
+          eventType: isMedia ? `${eventType}:media:${String(data.type ?? 'unknown')}` : eventType,
           needsHuman,
         },
       });
@@ -253,6 +282,16 @@ export class WhatsAppService {
     // After handoff, the bot stays silent until the admin replies/resolves the thread.
     // Every subsequent inbound message is still marked needsHuman so the context is visible.
     if (pendingHandoff) return;
+
+    if (isMedia) {
+      await this.sendAutomatedReply(
+        phone,
+        'Recebemos sua mídia por aqui. 💛 Como este atendimento automático trabalha apenas com texto, sua mensagem ficou sinalizada para a Gabriela e o Tiago.',
+        guest?.id,
+        'media-handoff',
+      );
+      return;
+    }
 
     if (ambiguous) {
       await this.sendAutomatedReply(

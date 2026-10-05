@@ -79,6 +79,11 @@ export class CommunicationsController {
     return this.communications.cancel(id);
   }
 
+  @Post('campaigns/:id/retry-failed')
+  retryFailed(@Param('id') id: string) {
+    return this.communications.retryFailedDeliveries(id);
+  }
+
   @Get('campaigns/:id/deliveries')
   deliveries(@Param('id') id: string) {
     return this.communications.listDeliveries(id);
@@ -87,6 +92,11 @@ export class CommunicationsController {
   @Post('guests/:id/send')
   sendGuest(@Param('id') id: string, @Body() dto: SendGuestCommunicationDto) {
     return this.communications.sendGuestMessage(id, dto.message);
+  }
+
+  @Post('guests/:id/whatsapp-opt-in')
+  reactivateGuest(@Param('id') id: string) {
+    return this.communications.reactivateGuestWhatsApp(id);
   }
 
   @Get('conversations')

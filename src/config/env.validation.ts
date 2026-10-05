@@ -13,17 +13,30 @@ export const envValidationSchema = Joi.object({
   UPLOADS_DIR: Joi.string().default('./uploads'),
   WPPCONNECT_URL: Joi.string().uri().default('http://wppconnect:21465'),
   WPPCONNECT_SESSION: Joi.string().default('casamento'),
-  WPPCONNECT_SECRET: Joi.string().allow('').default(''),
+  WPPCONNECT_SECRET: Joi.when('NODE_ENV', {
+    is: 'production',
+    then: Joi.string().min(32).required(),
+    otherwise: Joi.string().allow('').default(''),
+  }),
   // This value is interpolated into WEBHOOK_URL by Docker Compose, so reject characters
   // that would alter the query string. Empty keeps the feature safely disabled.
-  WHATSAPP_WEBHOOK_SECRET: Joi.string()
-    .allow('')
-    .pattern(/^[A-Za-z0-9_-]+$/)
-    .default(''),
+  WHATSAPP_WEBHOOK_SECRET: Joi.when('NODE_ENV', {
+    is: 'production',
+    then: Joi.string().min(24).pattern(/^[A-Za-z0-9_-]+$/).required(),
+    otherwise: Joi.string().allow('').pattern(/^[A-Za-z0-9_-]+$/).default(''),
+  }),
   // Kept for backwards-compatible .env files; the provider intentionally no longer
   // overrides the WPPConnect container-level WEBHOOK_URL with this value.
   WPPCONNECT_WEBHOOK_URL: Joi.string().uri().optional(),
   COMMUNICATION_TIMEZONE: Joi.string().default('America/Sao_Paulo'),
   COMMUNICATION_WINDOW_START: Joi.number().integer().min(0).max(23).default(9),
   COMMUNICATION_WINDOW_END: Joi.number().integer().min(1).max(24).default(20),
-});
+}).custom((value, helpers) => {
+  if (
+    value.NODE_ENV === 'production' &&
+    value.WPPCONNECT_SECRET === value.WHATSAPP_WEBHOOK_SECRET
+  ) {
+    return helpers.error('any.invalid');
+  }
+  return value;
+}, 'WhatsApp secrets must be distinct');
