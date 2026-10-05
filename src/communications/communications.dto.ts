@@ -103,6 +103,10 @@ export class UpdateCommunicationCampaignDto {
 export class ScheduleCampaignDto {
   @IsDateString()
   scheduledAt!: string;
+
+  @IsOptional()
+  @IsDateString()
+  expiresAt?: string;
 }
 
 export class SendNowCampaignDto {
