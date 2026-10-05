@@ -263,6 +263,7 @@ model WhatsAppMessage {
   eventType         String?
   needsHuman        Boolean                  @default(false)
   resolvedAt        DateTime?
+  processedAt       DateTime?
   createdAt         DateTime                 @default(now())
 
   @@index([guestGroupId, createdAt])
