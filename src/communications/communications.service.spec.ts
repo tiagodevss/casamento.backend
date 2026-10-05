@@ -2,6 +2,7 @@ import {
   CommunicationAudience,
   CommunicationCampaignStatus,
   CommunicationDeliveryStatus,
+  CommunicationTemplateScope,
 } from '@prisma/client';
 import { CommunicationsService } from './communications.service';
 import { WhatsAppAmbiguousSendError } from '../whatsapp/whatsapp-provider.interface';
@@ -333,6 +334,7 @@ describe('CommunicationsService reviewed delivery behavior', () => {
       communicationCampaign: {
         findUnique: jest.fn().mockResolvedValue({
           status: CommunicationCampaignStatus.PROCESSING,
+          expiresAt: new Date(Date.now() + 60 * 60_000),
         }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
@@ -424,6 +426,7 @@ describe('CommunicationsService failure semantics', () => {
       communicationCampaign: {
         findUnique: jest.fn().mockResolvedValue({
           status: CommunicationCampaignStatus.PROCESSING,
+          expiresAt: new Date(Date.now() + 60 * 60_000),
         }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
@@ -487,5 +490,117 @@ describe('CommunicationsService failure semantics', () => {
     ).rejects.toThrow('começou a ser processada durante a edição');
 
     expect(tx.communicationTemplate.update).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('CommunicationsService privacy and expiration', () => {
+  it('rejects party-sensitive variables in a GENERAL template', async () => {
+    const prisma = {
+      communicationTemplate: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'template-1',
+          scope: CommunicationTemplateScope.GENERAL,
+        }),
+      },
+    };
+    const service = new CommunicationsService(prisma as any, {} as any, {} as any);
+
+    await expect(
+      service.updateTemplate('template-1', {
+        name: 'Template geral',
+        bodySingle: 'Festa: {{maps_festa}}',
+        bodyGroup: 'Festa: {{maps_festa}}',
+        scope: CommunicationTemplateScope.GENERAL,
+        active: true,
+      }),
+    ).rejects.toThrow('precisam usar o escopo PARTY');
+  });
+
+  it('enforces PARTY scope even if the campaign audience is ALL', () => {
+    const service = new CommunicationsService({} as any, {} as any, {} as any);
+    const ceremonyOnly = group({ invitedToParty: false });
+
+    expect(
+      (service as any).evaluateEligibility(
+        ceremonyOnly,
+        campaign(CommunicationAudience.ALL),
+        CommunicationTemplateScope.PARTY,
+      ),
+    ).toEqual({ eligible: false, reason: 'PARTY_DETAILS_NOT_ALLOWED' });
+
+    const partyGuest = group({
+      invitedToParty: true,
+      rsvpResponse: { partyAttending: true },
+    });
+    expect(
+      (service as any).evaluateEligibility(
+        partyGuest,
+        campaign(CommunicationAudience.ALL),
+        CommunicationTemplateScope.PARTY,
+      ),
+    ).toEqual({ eligible: true });
+  });
+
+  it('marks overdue scheduled or processing campaigns as EXPIRED and skips remaining deliveries', async () => {
+    const campaignUpdate = jest.fn().mockResolvedValue({ count: 2 });
+    const deliveryUpdate = jest.fn().mockResolvedValue({ count: 5 });
+    const prisma = {
+      communicationCampaign: {
+        findMany: jest.fn().mockResolvedValue([{ id: 'c1' }, { id: 'c2' }]),
+        updateMany: campaignUpdate,
+      },
+      communicationDelivery: {
+        updateMany: deliveryUpdate,
+      },
+      $transaction: jest.fn(async (ops: any[]) => Promise.all(ops)),
+    };
+    const service = new CommunicationsService(prisma as any, {} as any, {} as any);
+
+    await (service as any).expireDueCampaigns();
+
+    expect(campaignUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: CommunicationCampaignStatus.EXPIRED,
+        }),
+      }),
+    );
+    expect(deliveryUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          status: CommunicationDeliveryStatus.SKIPPED,
+          skippedReason: 'CAMPAIGN_EXPIRED',
+        },
+      }),
+    );
+  });
+
+  it('rejects schedules outside the configured communication window', () => {
+    const config = {
+      get: jest.fn((key: string, fallback: string) => {
+        if (key === 'COMMUNICATION_TIMEZONE') return 'America/Sao_Paulo';
+        if (key === 'COMMUNICATION_WINDOW_START') return '9';
+        if (key === 'COMMUNICATION_WINDOW_END') return '20';
+        return fallback;
+      }),
+    };
+    const service = new CommunicationsService({} as any, {} as any, config as any);
+
+    expect(() =>
+      (service as any).assertWithinSendWindow(
+        new Date('2026-10-05T22:00:00-03:00'),
+      ),
+    ).toThrow('entre 9:00 e 20:00');
+  });
+
+  it('requires campaign expiry to be after the scheduled time', () => {
+    const service = new CommunicationsService({} as any, {} as any, {} as any);
+    expect(() =>
+      (service as any).assertExpiryAfterSchedule(
+        new Date('2026-10-05T12:00:00Z'),
+        new Date('2026-10-05T13:00:00Z'),
+      ),
+    ).toThrow('posterior ao horário agendado');
   });
 });
