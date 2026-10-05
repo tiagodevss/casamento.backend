@@ -39,5 +39,6 @@ jobs:
           cp .env.example .env
           docker compose --env-file .env -f deploy/docker-compose.yml config -q
           grep -q 'CUSTOM_USER_DATA_DIR: /usr/src/wpp-server/userDataDir/          grep -q "autoDownload: false" deploy/Dockerfile.wppconnect
+          docker build --build-arg WPP_SERVER_TAG=2.10.13 -f deploy/Dockerfile.wppconnect -t casamento-wppconnect-ci .
  deploy/docker-compose.yml
           grep -q "autoDownload: false" deploy/Dockerfile.wppconnect
