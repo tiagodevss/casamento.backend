@@ -343,7 +343,11 @@ describe('CommunicationsService reviewed delivery behavior', () => {
     const whatsapp = {
       sendText: jest.fn().mockResolvedValue({ providerMessageId: 'provider-1' }),
     };
-    const service = new CommunicationsService(prisma as any, whatsapp as any, {} as any);
+    const service = new CommunicationsService(
+      prisma as any,
+      whatsapp as any,
+      { get: jest.fn((_key: string, fallback: string) => fallback) } as any,
+    );
 
     await (service as any).processDelivery('delivery-1');
 
@@ -427,7 +431,11 @@ describe('CommunicationsService failure semantics', () => {
         .fn()
         .mockRejectedValue(new WhatsAppAmbiguousSendError('timeout após envio')),
     };
-    const service = new CommunicationsService(prisma as any, whatsapp as any, {} as any);
+    const service = new CommunicationsService(
+      prisma as any,
+      whatsapp as any,
+      { get: jest.fn((_key: string, fallback: string) => fallback) } as any,
+    );
 
     await (service as any).processDelivery('delivery-ambiguous');
 
