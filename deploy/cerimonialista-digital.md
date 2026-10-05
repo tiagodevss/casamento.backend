@@ -8,6 +8,9 @@ A cerimonialista digital usa o backend NestJS como fonte de verdade para convida
 - Uma campanha só pode ser agendada/enviada após `preview`, e qualquer alteração posterior no template invalida o preview.
 - O destinatário é revalidado imediatamente antes do envio. RSVP concluído, opt-out e cancelamento impedem o disparo mesmo se o destinatário já estava na fila.
 - A fila é persistida no PostgreSQL e possui unicidade por campanha + convite, evitando duplicidade após restart.
+- O texto exibido no preview é o texto efetivamente enviado; RSVP/opt-out ainda são revalidados antes de cada entrega.
+- Timeouts/resets após iniciar um envio viram falha de resultado incerto e nunca são reenviados automaticamente.
+- Mídias recebidas não são baixadas para o webhook; áudio/foto/documento são encaminhados para atendimento humano por metadados.
 - A janela padrão de envio é 09:00-20:00 em `America/Sao_Paulo`.
 - O WPPConnect não possui porta publicada no host/Traefik e não participa da rede compartilhada `inboxflow-network`; apenas o backend o acessa pela bridge `casamento-internal`.
 - Automação via WPPConnect é não oficial e pode sofrer bloqueio pelo WhatsApp. O número deve ser dedicado ao casamento.
@@ -17,6 +20,7 @@ A cerimonialista digital usa o backend NestJS como fonte de verdade para convida
 Defina no `.env` remoto:
 
 ```env
+WPP_SERVER_TAG=2.10.13
 WPPCONNECT_URL=http://wppconnect:21465
 WPPCONNECT_SESSION=casamento
 WPPCONNECT_SECRET=<segredo-forte-e-aleatorio>
@@ -62,7 +66,8 @@ Atualmente o frontend redireciona `/presentes` para o Casar.com. Por isso este p
 - Status da sessão: painel **Cerimonialista > Visão geral**.
 - Falha de envio: histórico da campanha em `CommunicationDelivery.lastError`.
 - Sessão desconectada: entregas permanecem `PENDING`; não são descartadas.
-- Após três tentativas falhas, a entrega fica `FAILED`.
+- Após três tentativas falhas conhecidas, a entrega fica `FAILED` e pode ser retomada pelo painel.
+- Falhas marcadas como `UNCERTAIN_SEND` não entram no retry automático/manual em lote para evitar duplicidade.
 - Mensagens que deixaram de ser elegíveis ficam `SKIPPED` com o motivo registrado.
 
 ## Rollback

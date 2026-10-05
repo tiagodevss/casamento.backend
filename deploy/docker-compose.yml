@@ -21,7 +21,12 @@ services:
       - casamento-internal
 
   wppconnect:
-    image: wppconnect/wppconnect-server:${WPP_SERVER_TAG:-2.10.13}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.wppconnect
+      args:
+        WPP_SERVER_TAG: ${WPP_SERVER_TAG:-2.10.13}
+    image: casamento-wppconnect:${WPP_SERVER_TAG:-2.10.13}
     container_name: casamento_wppconnect
     restart: unless-stopped
     environment:
