@@ -57,8 +57,8 @@ describe('CommunicationsService eligibility', () => {
   const evaluate = (
     guest: any,
     audience: CommunicationAudience,
-    templateKey?: string,
-  ) => (service as any).evaluateEligibility(guest, campaign(audience), templateKey);
+    templateScope: CommunicationTemplateScope = CommunicationTemplateScope.GENERAL,
+  ) => (service as any).evaluateEligibility(guest, campaign(audience), templateScope);
 
   it('keeps RSVP reminders limited to groups with pending members', () => {
     const pending = group({ members: [{ id: '1', name: 'João', attending: null }] });
@@ -117,7 +117,7 @@ describe('CommunicationsService eligibility', () => {
 
   it('protects official party-detail templates even if the campaign audience is misconfigured', () => {
     const ceremonyOnly = group({ invitedToParty: false });
-    expect(evaluate(ceremonyOnly, CommunicationAudience.ALL, 'INFO_PARTY')).toEqual({
+    expect(evaluate(ceremonyOnly, CommunicationAudience.ALL, CommunicationTemplateScope.PARTY)).toEqual({
       eligible: false,
       reason: 'PARTY_DETAILS_NOT_ALLOWED',
     });
@@ -126,7 +126,7 @@ describe('CommunicationsService eligibility', () => {
       invitedToParty: true,
       rsvpResponse: { partyAttending: true },
     });
-    expect(evaluate(partyGuest, CommunicationAudience.ALL, 'INFO_PARTY')).toEqual({
+    expect(evaluate(partyGuest, CommunicationAudience.ALL, CommunicationTemplateScope.PARTY)).toEqual({
       eligible: true,
     });
   });
