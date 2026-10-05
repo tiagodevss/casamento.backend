@@ -15,14 +15,18 @@ export const envValidationSchema = Joi.object({
   WPPCONNECT_SESSION: Joi.string().default('casamento'),
   WPPCONNECT_SECRET: Joi.when('NODE_ENV', {
     is: 'production',
-    then: Joi.string().min(32).required(),
+    then: Joi.string().min(32).invalid('change-me-to-another-long-random-string').required(),
     otherwise: Joi.string().allow('').default(''),
   }),
   // This value is interpolated into WEBHOOK_URL by Docker Compose, so reject characters
   // that would alter the query string. Empty keeps the feature safely disabled.
   WHATSAPP_WEBHOOK_SECRET: Joi.when('NODE_ENV', {
     is: 'production',
-    then: Joi.string().min(24).pattern(/^[A-Za-z0-9_-]+$/).required(),
+    then: Joi.string()
+      .min(24)
+      .pattern(/^[A-Za-z0-9_-]+$/)
+      .invalid('change_me_webhook_secret_32_chars_min')
+      .required(),
     otherwise: Joi.string().allow('').pattern(/^[A-Za-z0-9_-]+$/).default(''),
   }),
   // Kept for backwards-compatible .env files; the provider intentionally no longer
