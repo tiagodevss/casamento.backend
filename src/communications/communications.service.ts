@@ -317,14 +317,15 @@ export class CommunicationsService implements OnModuleInit {
     return this.getCampaign(id);
   }
 
-  async sendNow(id: string) {
+  async sendNow(id: string, expiresAt?: Date) {
     const campaign = await this.requireEditableCampaign(id);
     const now = new Date();
     this.assertWithinSendWindow(now);
-    if (!campaign.expiresAt) {
+    const effectiveExpiry = expiresAt ?? campaign.expiresAt;
+    if (!effectiveExpiry) {
       throw new BadRequestException('Defina a validade da campanha antes de enviar');
     }
-    this.assertFutureExpiry(campaign.expiresAt);
+    this.assertFutureExpiry(effectiveExpiry);
     await this.requireActiveTemplate(campaign.templateId);
     await this.requirePreparedCampaign(id, campaign.previewedAt);
     const scheduled = await this.prisma.communicationCampaign.updateMany({
@@ -334,7 +335,11 @@ export class CommunicationsService implements OnModuleInit {
         updatedAt: campaign.updatedAt,
         previewedAt: { not: null },
       },
-      data: { scheduledAt: new Date(), status: CommunicationCampaignStatus.SCHEDULED },
+      data: {
+        scheduledAt: now,
+        expiresAt: effectiveExpiry,
+        status: CommunicationCampaignStatus.SCHEDULED,
+      },
     });
     if (scheduled.count === 0) {
       throw new BadRequestException(
