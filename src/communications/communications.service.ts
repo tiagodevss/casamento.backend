@@ -853,7 +853,7 @@ export class CommunicationsService implements OnModuleInit {
           failedAt: new Date(),
           nextAttemptAt: null,
           lastError:
-            'Resultado do envio desconhecido após interrupção do processo; reenvio automático bloqueado para evitar duplicidade.',
+            `${UNCERTAIN_SEND_PREFIX} Resultado do envio desconhecido após interrupção do processo; reenvio automático bloqueado para evitar duplicidade.`,
         },
       });
       if (unknown.count > 0) {
