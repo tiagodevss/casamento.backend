@@ -1,4 +1,4 @@
-import { CommunicationAudience } from '@prisma/client';
+import { CommunicationAudience, CommunicationTemplateScope } from '@prisma/client';
 import {
   ArrayUnique,
   IsArray,
@@ -29,6 +29,10 @@ export class UpdateCommunicationTemplateDto {
   bodyGroup!: string;
 
   @IsOptional()
+  @IsEnum(CommunicationTemplateScope)
+  scope?: CommunicationTemplateScope;
+
+  @IsOptional()
   @IsBoolean()
   active?: boolean;
 }
@@ -57,6 +61,10 @@ export class CreateCommunicationCampaignDto {
   @IsOptional()
   @IsDateString()
   scheduledAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  expiresAt?: string;
 }
 
 export class UpdateCommunicationCampaignDto {
@@ -86,6 +94,10 @@ export class UpdateCommunicationCampaignDto {
   @IsOptional()
   @IsDateString()
   scheduledAt?: string;
+
+  @IsOptional()
+  @IsDateString()
+  expiresAt?: string;
 }
 
 export class ScheduleCampaignDto {

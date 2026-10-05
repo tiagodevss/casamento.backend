@@ -1,4 +1,4 @@
-import { CommunicationAudience } from '@prisma/client';
+import { CommunicationAudience, CommunicationTemplateScope } from '@prisma/client';
 
 export type DefaultTemplate = {
   key: string;
@@ -6,6 +6,7 @@ export type DefaultTemplate = {
   description: string;
   bodySingle: string;
   bodyGroup: string;
+  scope?: CommunicationTemplateScope;
 };
 
 export const DEFAULT_COMMUNICATION_TEMPLATES: DefaultTemplate[] = [
@@ -65,6 +66,7 @@ export const DEFAULT_COMMUNICATION_TEMPLATES: DefaultTemplate[] = [
   },
   {
     key: 'INFO_PARTY',
+    scope: CommunicationTemplateScope.PARTY,
     name: 'Informações finais — cerimônia + festa',
     description: 'Informações práticas apenas para quem confirmou a recepção.',
     bodySingle:
@@ -83,6 +85,7 @@ export const DEFAULT_COMMUNICATION_TEMPLATES: DefaultTemplate[] = [
   },
   {
     key: 'WEEK_PARTY',
+    scope: CommunicationTemplateScope.PARTY,
     name: 'Falta 1 semana — cerimônia + festa',
     description: 'Lembrete de uma semana para convidados da recepção.',
     bodySingle:
@@ -101,6 +104,7 @@ export const DEFAULT_COMMUNICATION_TEMPLATES: DefaultTemplate[] = [
   },
   {
     key: 'TOMORROW_PARTY',
+    scope: CommunicationTemplateScope.PARTY,
     name: 'É amanhã — cerimônia + festa',
     description: 'Mensagem curta de véspera para quem confirmou a recepção.',
     bodySingle:
@@ -119,6 +123,7 @@ export const DEFAULT_COMMUNICATION_TEMPLATES: DefaultTemplate[] = [
   },
   {
     key: 'TODAY_PARTY',
+    scope: CommunicationTemplateScope.PARTY,
     name: 'É hoje — cerimônia + festa',
     description: 'Lembrete na manhã do casamento para convidados da festa.',
     bodySingle:
@@ -142,6 +147,7 @@ export type DefaultCampaignPlan = {
   templateKey: string;
   audience: CommunicationAudience;
   suggestedAt: string;
+  expiresAt: string;
 };
 
 export const DEFAULT_CAMPAIGN_PLAN: DefaultCampaignPlan[] = [
@@ -150,83 +156,97 @@ export const DEFAULT_CAMPAIGN_PLAN: DefaultCampaignPlan[] = [
     templateKey: 'CERIMONIALISTA_INTRO',
     audience: CommunicationAudience.ALL,
     suggestedAt: '2026-09-08T19:00:00-03:00',
+    expiresAt: '2026-09-09T00:00:00-03:00',
   },
   {
     name: 'RSVP — 1º lembrete',
     templateKey: 'RSVP_REMINDER_1',
     audience: CommunicationAudience.RSVP_PENDING,
     suggestedAt: '2026-09-15T10:00:00-03:00',
+    expiresAt: '2026-09-23T00:00:00-03:00',
   },
   {
     name: 'RSVP — 2º lembrete',
     templateKey: 'RSVP_REMINDER_2',
     audience: CommunicationAudience.RSVP_PENDING,
     suggestedAt: '2026-09-23T10:00:00-03:00',
+    expiresAt: '2026-09-30T00:00:00-03:00',
   },
   {
     name: 'RSVP — última chamada',
     templateKey: 'RSVP_FINAL',
     audience: CommunicationAudience.RSVP_PENDING,
     suggestedAt: '2026-09-30T10:00:00-03:00',
+    expiresAt: '2026-10-02T00:00:00-03:00',
   },
   {
     name: 'Site e lista de presentes',
     templateKey: 'SITE_GIFTS',
     audience: CommunicationAudience.CONFIRMED,
     suggestedAt: '2026-10-15T10:00:00-03:00',
+    expiresAt: '2026-10-31T00:00:00-03:00',
   },
   {
     name: 'Informações finais — cerimônia',
     templateKey: 'INFO_CEREMONY',
     audience: CommunicationAudience.CEREMONY_ONLY_CONFIRMED,
     suggestedAt: '2026-10-31T10:00:00-03:00',
+    expiresAt: '2026-11-07T00:00:00-03:00',
   },
   {
     name: 'Informações finais — cerimônia + festa',
     templateKey: 'INFO_PARTY',
     audience: CommunicationAudience.PARTY_CONFIRMED,
     suggestedAt: '2026-10-31T10:30:00-03:00',
+    expiresAt: '2026-11-07T00:00:00-03:00',
   },
   {
     name: 'Falta 1 semana — cerimônia',
     templateKey: 'WEEK_CEREMONY',
     audience: CommunicationAudience.CEREMONY_ONLY_CONFIRMED,
     suggestedAt: '2026-11-07T10:00:00-03:00',
+    expiresAt: '2026-11-13T00:00:00-03:00',
   },
   {
     name: 'Falta 1 semana — cerimônia + festa',
     templateKey: 'WEEK_PARTY',
     audience: CommunicationAudience.PARTY_CONFIRMED,
     suggestedAt: '2026-11-07T10:30:00-03:00',
+    expiresAt: '2026-11-13T00:00:00-03:00',
   },
   {
     name: 'É amanhã — cerimônia',
     templateKey: 'TOMORROW_CEREMONY',
     audience: CommunicationAudience.CEREMONY_ONLY_CONFIRMED,
     suggestedAt: '2026-11-13T10:00:00-03:00',
+    expiresAt: '2026-11-14T00:00:00-03:00',
   },
   {
     name: 'É amanhã — cerimônia + festa',
     templateKey: 'TOMORROW_PARTY',
     audience: CommunicationAudience.PARTY_CONFIRMED,
     suggestedAt: '2026-11-13T10:30:00-03:00',
+    expiresAt: '2026-11-14T00:00:00-03:00',
   },
   {
     name: 'É hoje — cerimônia',
     templateKey: 'TODAY_CEREMONY',
     audience: CommunicationAudience.CEREMONY_ONLY_CONFIRMED,
     suggestedAt: '2026-11-14T09:00:00-03:00',
+    expiresAt: '2026-11-14T16:00:00-03:00',
   },
   {
     name: 'É hoje — cerimônia + festa',
     templateKey: 'TODAY_PARTY',
     audience: CommunicationAudience.PARTY_CONFIRMED,
     suggestedAt: '2026-11-14T09:30:00-03:00',
+    expiresAt: '2026-11-14T16:00:00-03:00',
   },
   {
     name: 'Agradecimento',
     templateKey: 'THANK_YOU',
     audience: CommunicationAudience.CONFIRMED,
     suggestedAt: '2026-11-16T10:00:00-03:00',
+    expiresAt: '2026-11-30T23:59:00-03:00',
   },
 ];

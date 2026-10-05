@@ -155,6 +155,12 @@ enum CommunicationCampaignStatus {
   COMPLETED
   CANCELLED
   FAILED
+  EXPIRED
+}
+
+enum CommunicationTemplateScope {
+  GENERAL
+  PARTY
 }
 
 enum CommunicationDeliveryStatus {
@@ -188,6 +194,7 @@ model CommunicationTemplate {
   description String?
   bodySingle  String
   bodyGroup   String
+  scope       CommunicationTemplateScope @default(GENERAL)
   active      Boolean                 @default(true)
   createdAt   DateTime                @default(now())
   updatedAt   DateTime                @updatedAt
@@ -204,6 +211,7 @@ model CommunicationCampaign {
   requireInviteSent    Boolean                     @default(true)
   status               CommunicationCampaignStatus @default(DRAFT)
   scheduledAt          DateTime?
+  expiresAt            DateTime?
   previewedAt          DateTime?
   startedAt            DateTime?
   finishedAt           DateTime?
@@ -213,6 +221,7 @@ model CommunicationCampaign {
   deliveries           CommunicationDelivery[]
 
   @@index([status, scheduledAt])
+  @@index([status, expiresAt])
   @@index([templateId])
 }
 
