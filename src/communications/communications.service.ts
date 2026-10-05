@@ -158,6 +158,18 @@ export class CommunicationsService implements OnModuleInit {
         });
       }
 
+      // If the scheduler won the race before the invalidation above, that campaign is now
+      // PROCESSING and must block the template edit. Throwing here rolls the whole transaction
+      // back, including any DRAFT/SCHEDULED invalidation already performed.
+      const processingAfterInvalidation = await tx.communicationCampaign.count({
+        where: { templateId: id, status: CommunicationCampaignStatus.PROCESSING },
+      });
+      if (processingAfterInvalidation > 0) {
+        throw new BadRequestException(
+          'A campanha começou a ser processada durante a edição. Tente novamente após o envio terminar',
+        );
+      }
+
       return tx.communicationTemplate.update({
         where: { id },
         data: {
