@@ -66,7 +66,11 @@ export class CommunicationsController {
 
   @Post('campaigns/:id/schedule')
   schedule(@Param('id') id: string, @Body() dto: ScheduleCampaignDto) {
-    return this.communications.schedule(id, new Date(dto.scheduledAt));
+    return this.communications.schedule(
+      id,
+      new Date(dto.scheduledAt),
+      dto.expiresAt ? new Date(dto.expiresAt) : undefined,
+    );
   }
 
   @Post('campaigns/:id/send-now')
