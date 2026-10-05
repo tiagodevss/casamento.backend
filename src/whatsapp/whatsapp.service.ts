@@ -258,9 +258,24 @@ export class WhatsAppService {
         },
       });
     } catch (error: any) {
-      if (providerMessageId && String(error?.code) === 'P2002') return;
-      throw error;
+      if (providerMessageId && String(error?.code) === 'P2002') {
+        const existing = await this.prisma.whatsAppMessage.findUnique({
+          where: { providerMessageId },
+          select: { processedAt: true },
+        });
+        if (existing?.processedAt) return;
+      } else {
+        throw error;
+      }
     }
+
+    const markProcessed = async () => {
+      if (!providerMessageId) return;
+      await this.prisma.whatsAppMessage.updateMany({
+        where: { providerMessageId, processedAt: null },
+        data: { processedAt: new Date() },
+      });
+    };
 
     if (STOP_WORDS.has(normalizedBody)) {
       const ids = matches.map((item) => item.id);
@@ -276,12 +291,16 @@ export class WhatsAppService {
         guest?.id,
         'opt-out',
       );
+      await markProcessed();
       return;
     }
 
     // After handoff, the bot stays silent until the admin replies/resolves the thread.
     // Every subsequent inbound message is still marked needsHuman so the context is visible.
-    if (pendingHandoff) return;
+    if (pendingHandoff) {
+      await markProcessed();
+      return;
+    }
 
     if (isMedia) {
       await this.sendAutomatedReply(
@@ -290,6 +309,7 @@ export class WhatsAppService {
         guest?.id,
         'media-handoff',
       );
+      await markProcessed();
       return;
     }
 
@@ -300,6 +320,7 @@ export class WhatsAppService {
         undefined,
         'ambiguous-phone-handoff',
       );
+      await markProcessed();
       return;
     }
 
@@ -310,6 +331,7 @@ export class WhatsAppService {
         guest?.id,
         'handoff',
       );
+      await markProcessed();
       return;
     }
 
@@ -320,11 +342,13 @@ export class WhatsAppService {
         undefined,
         'unknown-phone',
       );
+      await markProcessed();
       return;
     }
 
     const response = await this.menuResponse(normalizedBody, guest);
     await this.sendAutomatedReply(phone, response.message, guest.id, response.eventType);
+    await markProcessed();
   }
 
   private async menuResponse(
