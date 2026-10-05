@@ -13,6 +13,7 @@ import {
   CreateCommunicationCampaignDto,
   ReplyWhatsAppMessageDto,
   ScheduleCampaignDto,
+  SendNowCampaignDto,
   SendGuestCommunicationDto,
   UpdateCommunicationCampaignDto,
   UpdateCommunicationTemplateDto,
@@ -74,8 +75,11 @@ export class CommunicationsController {
   }
 
   @Post('campaigns/:id/send-now')
-  sendNow(@Param('id') id: string) {
-    return this.communications.sendNow(id);
+  sendNow(@Param('id') id: string, @Body() dto: SendNowCampaignDto) {
+    return this.communications.sendNow(
+      id,
+      dto.expiresAt ? new Date(dto.expiresAt) : undefined,
+    );
   }
 
   @Post('campaigns/:id/cancel')
