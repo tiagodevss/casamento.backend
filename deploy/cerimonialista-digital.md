@@ -8,7 +8,7 @@ A cerimonialista digital usa o backend NestJS como fonte de verdade para convida
 - Uma campanha só pode ser agendada/enviada após `preview`, e qualquer alteração posterior no template invalida o preview.
 - O destinatário é revalidado imediatamente antes do envio. RSVP concluído, opt-out e cancelamento impedem o disparo mesmo se o destinatário já estava na fila.
 - A fila é persistida no PostgreSQL e possui unicidade por campanha + convite, evitando duplicidade após restart.
-- O texto exibido no preview é o texto efetivamente enviado; RSVP/opt-out ainda são revalidados antes de cada entrega.
+- Público, telefone e versão do template são aprovados no preview. Variáveis dinâmicas de RSVP e dias faltando são recalculadas imediatamente antes de cada entrega.
 - Timeouts/resets após iniciar um envio viram falha de resultado incerto e nunca são reenviados automaticamente.
 - Mídias recebidas não são baixadas para o webhook; áudio/foto/documento são encaminhados para atendimento humano por metadados.
 - A janela padrão de envio é 09:00-20:00 em `America/Sao_Paulo`.
