@@ -109,3 +109,62 @@ describe('WhatsAppService reliability', () => {
     expect(provider.sendText).not.toHaveBeenCalled();
   });
 });
+
+
+describe('WhatsAppService media handoff', () => {
+  it('stores only media metadata and hands the thread to a human', async () => {
+    const provider = {
+      sendText: jest.fn().mockResolvedValue({ providerMessageId: 'reply-1' }),
+    };
+    const prisma = {
+      guestGroup: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'group-1',
+            displayName: 'Família Teste',
+            invitedToParty: false,
+            phone: '(19) 99999-9999',
+            phoneNormalized: '5519999999999',
+            members: [{ name: 'João', attending: true }],
+            rsvpResponse: null,
+          },
+        ]),
+      },
+      whatsAppMessage: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({}),
+      },
+    };
+    const service = new WhatsAppService(provider as any, prisma as any, {} as any);
+
+    const hugeBase64 = 'A'.repeat(10_000);
+    const result = await service.handleWebhook({
+      event: 'onmessage',
+      from: '5519999999999@c.us',
+      body: hugeBase64,
+      type: 'audio',
+      mimetype: 'audio/ogg',
+      fromMe: false,
+      id: 'media-1',
+    });
+
+    expect(result).toEqual({ ok: true, handled: 'media' });
+    expect(prisma.whatsAppMessage.create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        data: expect.objectContaining({
+          body: '[Áudio recebido]',
+          needsHuman: true,
+          eventType: 'onmessage:media:audio',
+        }),
+      }),
+    );
+    expect(
+      prisma.whatsAppMessage.create.mock.calls[0][0].data.body,
+    ).not.toContain(hugeBase64);
+    expect(provider.sendText).toHaveBeenCalledWith(
+      '5519999999999',
+      expect.stringContaining('sua mensagem ficou sinalizada'),
+    );
+  });
+});
