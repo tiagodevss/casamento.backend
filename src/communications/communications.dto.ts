@@ -105,6 +105,12 @@ export class ScheduleCampaignDto {
   scheduledAt!: string;
 }
 
+export class SendNowCampaignDto {
+  @IsOptional()
+  @IsDateString()
+  expiresAt?: string;
+}
+
 export class SendGuestCommunicationDto {
   @IsString()
   @MinLength(1)
