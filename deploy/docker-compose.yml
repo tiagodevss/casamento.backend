@@ -13,7 +13,7 @@ services:
       - traefik.docker.network=inboxflow-network
       - traefik.http.routers.casamento-api.rule=Host(`api.tiagoegabriela.com.br`)
       - traefik.http.routers.casamento-api.entrypoints=web,websecure
-      - traefik.http.routers.casamento-api.tls.certresolver=letsencrypt
+      - traefik.http.routers.casamento-api.tls.certresolver=letsencrypt-http
       - traefik.http.routers.casamento-api.service=casamento-api
       - traefik.http.services.casamento-api.loadbalancer.server.port=3000
     networks:
