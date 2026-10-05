@@ -11,7 +11,10 @@ A cerimonialista digital usa o backend NestJS como fonte de verdade para convida
 - Público, telefone e versão do template são aprovados no preview. Variáveis dinâmicas de RSVP e dias faltando são recalculadas imediatamente antes de cada entrega.
 - Timeouts/resets após iniciar um envio viram falha de resultado incerto e nunca são reenviados automaticamente.
 - Mídias recebidas não são baixadas para o webhook; áudio/foto/documento são encaminhados para atendimento humano por metadados.
-- A janela padrão de envio é 09:00-20:00 em `America/Sao_Paulo`.
+- Webhooks inbound passam por `casamento_webhook_relay`: o relay persiste o evento em volume antes de responder ao WPPConnect e tenta entregá-lo ao Nest até receber 2xx. Reinícios não descartam a fila.
+- O WPPConnect também inicia com `allUnreadOnStart=true` como segunda camada de recuperação para mensagens ainda não marcadas como lidas.
+- A janela padrão de envio é 09:00-20:00 em `America/Sao_Paulo`; agendamentos fora dessa janela são rejeitados.
+- Campanhas possuem validade (`expiresAt`). Campanhas vencidas viram `EXPIRED` e entregas restantes ficam `SKIPPED/CAMPAIGN_EXPIRED`.
 - O WPPConnect não possui porta publicada no host/Traefik e não participa da rede compartilhada `inboxflow-network`; apenas o backend o acessa pela bridge `casamento-internal`.
 - Automação via WPPConnect é não oficial e pode sofrer bloqueio pelo WhatsApp. O número deve ser dedicado ao casamento.
 
@@ -20,12 +23,11 @@ A cerimonialista digital usa o backend NestJS como fonte de verdade para convida
 Defina no `.env` remoto:
 
 ```env
-WPP_SERVER_TAG=2.10.13
+WPP_SERVER_TAG=2.10.36
 WPPCONNECT_URL=http://wppconnect:21465
 WPPCONNECT_SESSION=casamento
 WPPCONNECT_SECRET=<segredo-forte-e-aleatorio>
 WHATSAPP_WEBHOOK_SECRET=<outro-segredo-forte-e-aleatorio>
-WPPCONNECT_WEBHOOK_URL=http://api:3000/api/whatsapp/webhook?secret=<mesmo-WHATSAPP_WEBHOOK_SECRET>
 COMMUNICATION_TIMEZONE=America/Sao_Paulo
 COMMUNICATION_WINDOW_START=9
 COMMUNICATION_WINDOW_END=20
@@ -36,7 +38,7 @@ COMMUNICATION_WINDOW_END=20
 ## Primeiro deploy
 
 1. Atualize o `.env` remoto antes de subir os containers.
-2. Execute o deploy normal. O `docker-compose.yml` iniciará `casamento_api` e `casamento_wppconnect`.
+2. Execute o deploy normal. O `docker-compose.yml` iniciará `casamento_api`, `casamento_webhook_relay` e `casamento_wppconnect`.
 3. No painel administrativo, abra **Cerimonialista**.
 4. Clique **Conectar WhatsApp**.
 5. Gere/atualize o QR e leia pelo WhatsApp do número dedicado.
