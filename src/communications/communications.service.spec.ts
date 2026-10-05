@@ -1,6 +1,7 @@
 import {
   CommunicationAudience,
   CommunicationCampaignStatus,
+  CommunicationDeliveryStatus,
 } from '@prisma/client';
 import { CommunicationsService } from './communications.service';
 
@@ -229,5 +230,149 @@ describe('CommunicationsService campaign safety', () => {
         },
       }),
     );
+  });
+});
+
+
+describe('CommunicationsService reviewed delivery behavior', () => {
+  it('rejects scheduling in the past before touching the database', async () => {
+    const service = new CommunicationsService({} as any, {} as any, {} as any);
+
+    await expect(
+      service.schedule('campaign-1', new Date('2026-01-01T12:00:00Z')),
+    ).rejects.toThrow('Escolha uma data futura');
+  });
+
+  it('keeps a scheduled campaign scheduled when its audience is previewed again', async () => {
+    const updatedAt = new Date('2026-10-05T12:00:00-03:00');
+    const campaignRecord = {
+      id: 'campaign-1',
+      status: CommunicationCampaignStatus.SCHEDULED,
+      updatedAt,
+      audience: CommunicationAudience.ALL,
+      includeGuestGroupIds: [],
+      requireInviteSent: true,
+      template: {
+        id: 'template-1',
+        key: 'INTRO',
+        active: true,
+        bodySingle: 'Oi {{nome}}',
+        bodyGroup: 'Oi {{nome}}',
+      },
+    };
+    const tx = {
+      communicationCampaign: {
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      communicationDelivery: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+    const prisma = {
+      communicationCampaign: {
+        findUnique: jest.fn().mockResolvedValue(campaignRecord),
+      },
+      guestGroup: {
+        findMany: jest.fn().mockResolvedValue([group()]),
+      },
+      $transaction: jest.fn(async (callback: any) => callback(tx)),
+    };
+    const config = { get: jest.fn((_key: string, fallback: string) => fallback) };
+    const service = new CommunicationsService(prisma as any, {} as any, config as any);
+
+    await service.preview('campaign-1');
+
+    expect(tx.communicationCampaign.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.not.objectContaining({
+          status: CommunicationCampaignStatus.DRAFT,
+        }),
+      }),
+    );
+  });
+
+  it('sends exactly the message frozen during preview while revalidating eligibility', async () => {
+    const guest = group();
+    const delivery = {
+      id: 'delivery-1',
+      campaignId: 'campaign-1',
+      guestGroupId: guest.id,
+      phone: guest.phoneNormalized,
+      renderedMessage: 'Mensagem exatamente revisada no preview',
+      status: CommunicationDeliveryStatus.PROCESSING,
+      attempts: 0,
+      campaign: {
+        id: 'campaign-1',
+        status: CommunicationCampaignStatus.PROCESSING,
+        audience: CommunicationAudience.ALL,
+        includeGuestGroupIds: [],
+        requireInviteSent: true,
+        template: {
+          key: 'INTRO',
+          active: true,
+          bodySingle: 'Texto que não deve ser renderizado novamente',
+          bodyGroup: 'Texto que não deve ser renderizado novamente',
+        },
+      },
+      guestGroup: guest,
+    };
+    const prisma = {
+      communicationDelivery: {
+        findUnique: jest.fn().mockResolvedValue(delivery),
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        count: jest.fn().mockResolvedValue(0),
+      },
+      communicationCampaign: {
+        findUnique: jest.fn().mockResolvedValue({
+          status: CommunicationCampaignStatus.PROCESSING,
+        }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      guestGroup: {
+        count: jest.fn().mockResolvedValue(1),
+      },
+    };
+    const whatsapp = {
+      sendText: jest.fn().mockResolvedValue({ providerMessageId: 'provider-1' }),
+    };
+    const service = new CommunicationsService(prisma as any, whatsapp as any, {} as any);
+
+    await (service as any).processDelivery('delivery-1');
+
+    expect(whatsapp.sendText).toHaveBeenCalledWith(
+      guest.phoneNormalized,
+      'Mensagem exatamente revisada no preview',
+      guest.id,
+      'campaign:campaign-1',
+    );
+  });
+
+  it('resolves only handoff messages that existed up to the selected message', async () => {
+    const createdAt = new Date('2026-10-05T14:00:00Z');
+    const prisma = {
+      whatsAppMessage: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'message-1',
+          phone: '5519999999999',
+          createdAt,
+        }),
+        updateMany: jest.fn().mockResolvedValue({ count: 2 }),
+      },
+    };
+    const service = new CommunicationsService(prisma as any, {} as any, {} as any);
+
+    await service.resolveConversationMessage('message-1');
+
+    expect(prisma.whatsAppMessage.updateMany).toHaveBeenCalledWith({
+      where: {
+        phone: '5519999999999',
+        needsHuman: true,
+        resolvedAt: null,
+        createdAt: { lte: createdAt },
+      },
+      data: { resolvedAt: expect.any(Date), needsHuman: false },
+    });
   });
 });
