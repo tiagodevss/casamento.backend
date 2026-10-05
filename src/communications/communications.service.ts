@@ -355,7 +355,8 @@ export class CommunicationsService implements OnModuleInit {
     if (!campaign) throw new NotFoundException('Campanha não encontrada');
     if (
       campaign.status === CommunicationCampaignStatus.COMPLETED ||
-      campaign.status === CommunicationCampaignStatus.CANCELLED
+      campaign.status === CommunicationCampaignStatus.CANCELLED ||
+      campaign.status === CommunicationCampaignStatus.EXPIRED
     ) {
       return campaign;
     }
@@ -559,6 +560,9 @@ export class CommunicationsService implements OnModuleInit {
     if (campaign.status !== CommunicationCampaignStatus.FAILED) {
       throw new BadRequestException('Somente campanhas com falha podem ser retomadas');
     }
+    if (!campaign.expiresAt || campaign.expiresAt.getTime() <= Date.now()) {
+      throw new BadRequestException('Esta campanha não pode ser retomada porque a validade expirou');
+    }
 
     const retried = await this.prisma.$transaction(async (tx) => {
       const result = await tx.communicationDelivery.updateMany({
@@ -754,6 +758,12 @@ export class CommunicationsService implements OnModuleInit {
 
     if (!delivery.campaign.template.active) {
       await this.skipDelivery(delivery.id, delivery.campaignId, 'TEMPLATE_INACTIVE');
+      return;
+    }
+    try {
+      this.assertTemplatePrivacy(delivery.campaign.template);
+    } catch {
+      await this.skipDelivery(delivery.id, delivery.campaignId, 'TEMPLATE_PRIVACY_VIOLATION');
       return;
     }
 
