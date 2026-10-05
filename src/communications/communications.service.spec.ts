@@ -293,27 +293,32 @@ describe('CommunicationsService reviewed delivery behavior', () => {
     );
   });
 
-  it('sends exactly the message frozen during preview while revalidating eligibility', async () => {
-    const guest = group();
+  it('refreshes dynamic RSVP variables at send time without changing the reviewed recipient', async () => {
+    const guest = group({
+      members: [
+        { id: 'member-1', name: 'João', attending: true },
+        { id: 'member-2', name: 'Maria', attending: null },
+      ],
+    });
     const delivery = {
       id: 'delivery-1',
       campaignId: 'campaign-1',
       guestGroupId: guest.id,
       phone: guest.phoneNormalized,
-      renderedMessage: 'Mensagem exatamente revisada no preview',
+      renderedMessage: 'Preview antigo: João e Maria pendentes',
       status: CommunicationDeliveryStatus.PROCESSING,
       attempts: 0,
       campaign: {
         id: 'campaign-1',
         status: CommunicationCampaignStatus.PROCESSING,
-        audience: CommunicationAudience.ALL,
+        audience: CommunicationAudience.RSVP_PENDING,
         includeGuestGroupIds: [],
         requireInviteSent: true,
         template: {
-          key: 'INTRO',
+          key: 'RSVP_REMINDER_1',
           active: true,
-          bodySingle: 'Texto que não deve ser renderizado novamente',
-          bodyGroup: 'Texto que não deve ser renderizado novamente',
+          bodySingle: 'Pendente: {{pendentes}}',
+          bodyGroup: 'Pendente: {{pendentes}}',
         },
       },
       guestGroup: guest,
@@ -344,7 +349,7 @@ describe('CommunicationsService reviewed delivery behavior', () => {
 
     expect(whatsapp.sendText).toHaveBeenCalledWith(
       guest.phoneNormalized,
-      'Mensagem exatamente revisada no preview',
+      'Pendente: Maria',
       guest.id,
       'campaign:campaign-1',
     );
