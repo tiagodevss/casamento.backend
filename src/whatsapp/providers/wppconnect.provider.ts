@@ -3,6 +3,7 @@ import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 import {
+  WhatsAppAmbiguousSendError,
   WhatsAppConnectionStatus,
   WhatsAppProvider,
   WhatsAppSendResult,
@@ -206,11 +207,43 @@ export class WppConnectProvider implements WhatsAppProvider {
   }
 
   async sendText(phone: string, message: string): Promise<WhatsAppSendResult> {
-    const raw = await this.request<unknown>(
-      'post',
-      `/api/${encodeURIComponent(this.session)}/send-message`,
-      { phone, isGroup: false, isNewsletter: false, isLid: false, message },
-    );
+    const path = `/api/${encodeURIComponent(this.session)}/send-message`;
+    const body = { phone, isGroup: false, isNewsletter: false, isLid: false, message };
+
+    const send = async (retryUnauthorized: boolean): Promise<unknown> => {
+      const token = await this.accessToken();
+      try {
+        const response = await firstValueFrom(
+          this.http.post(`${this.baseUrl}${path}`, body, {
+            headers: { Authorization: `Bearer ${token}` },
+            timeout: 20_000,
+          }),
+        );
+        return response.data;
+      } catch (error: any) {
+        if (error?.response?.status === 401 && retryUnauthorized) {
+          this.token = undefined;
+          return send(false);
+        }
+
+        const code = String(error?.code ?? '').toUpperCase();
+        const ambiguousCodes = new Set([
+          'ECONNABORTED',
+          'ETIMEDOUT',
+          'ECONNRESET',
+          'EPIPE',
+          'ERR_NETWORK',
+        ]);
+        if (!error?.response && ambiguousCodes.has(code)) {
+          throw new WhatsAppAmbiguousSendError(
+            `WPPConnect não confirmou o resultado do envio (${code || 'NETWORK_ERROR'}). Reenvio automático bloqueado para evitar duplicidade.`,
+          );
+        }
+        throw this.connectionError(error);
+      }
+    };
+
+    const raw = await send(true);
     return { providerMessageId: extractMessageId(raw), raw };
   }
 }

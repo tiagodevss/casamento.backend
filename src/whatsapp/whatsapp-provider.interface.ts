@@ -9,6 +9,17 @@ export type WhatsAppSendResult = {
   raw?: unknown;
 };
 
+/**
+ * O provider pode ter aceitado a mensagem mesmo sem devolver uma resposta HTTP
+ * (timeout/reset). Esses casos nunca devem ser reenviados automaticamente.
+ */
+export class WhatsAppAmbiguousSendError extends Error {
+  constructor(message = 'O resultado do envio ao WhatsApp é incerto') {
+    super(message);
+    this.name = 'WhatsAppAmbiguousSendError';
+  }
+}
+
 export interface WhatsAppProvider {
   getStatus(): Promise<WhatsAppConnectionStatus>;
   startSession(): Promise<unknown>;

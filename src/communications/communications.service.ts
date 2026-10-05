@@ -15,6 +15,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
+import { WhatsAppAmbiguousSendError } from '../whatsapp/whatsapp-provider.interface';
 import { normalizeBrazilPhone } from '../whatsapp/phone.util';
 import {
   CreateCommunicationCampaignDto,
@@ -31,6 +32,7 @@ const CEREMONY_MAPS =
   'https://www.google.com/maps/search/?api=1&query=Igreja+Universal+Paulínia+Av.+José+Paulino+610+Centro+Paulínia+SP';
 const PARTY_MAPS = 'https://maps.app.goo.gl/xCx15d8vKrzTXubV8';
 const STALE_PROCESSING_MS = 2 * 60_000;
+const UNCERTAIN_SEND_PREFIX = 'UNCERTAIN_SEND:';
 const PARTY_DETAIL_TEMPLATE_KEYS = new Set([
   'INFO_PARTY',
   'WEEK_PARTY',
@@ -110,7 +112,10 @@ export class CommunicationsService implements OnModuleInit {
           name: item.name,
           templateId: template.id,
           audience: item.audience,
-          scheduledAt: new Date(item.suggestedAt),
+          scheduledAt:
+            new Date(item.suggestedAt).getTime() > Date.now()
+              ? new Date(item.suggestedAt)
+              : null,
           status: CommunicationCampaignStatus.DRAFT,
         },
       });
@@ -123,37 +128,36 @@ export class CommunicationsService implements OnModuleInit {
 
   async updateTemplate(id: string, dto: UpdateCommunicationTemplateDto) {
     await this.requireTemplate(id);
-    await this.prisma.communicationCampaign.updateMany({
-      where: {
-        templateId: id,
-        status: {
-          in: [CommunicationCampaignStatus.DRAFT, CommunicationCampaignStatus.SCHEDULED],
-        },
-      },
-      data: { status: CommunicationCampaignStatus.DRAFT, previewedAt: null },
-    });
-
-    const processing = await this.prisma.communicationCampaign.count({
-      where: { templateId: id, status: CommunicationCampaignStatus.PROCESSING },
-    });
-    if (processing > 0) {
-      throw new BadRequestException(
-        'Aguarde a campanha em processamento terminar antes de alterar este template',
-      );
-    }
-
-    const editableCampaigns = await this.prisma.communicationCampaign.findMany({
-      where: { templateId: id, status: CommunicationCampaignStatus.DRAFT },
-      select: { id: true },
-    });
-    const campaignIds = editableCampaigns.map((item) => item.id);
 
     return this.prisma.$transaction(async (tx) => {
+      const processing = await tx.communicationCampaign.count({
+        where: { templateId: id, status: CommunicationCampaignStatus.PROCESSING },
+      });
+      if (processing > 0) {
+        throw new BadRequestException(
+          'Aguarde a campanha em processamento terminar antes de alterar este template',
+        );
+      }
+
+      const editableCampaigns = await tx.communicationCampaign.findMany({
+        where: {
+          templateId: id,
+          status: {
+            in: [CommunicationCampaignStatus.DRAFT, CommunicationCampaignStatus.SCHEDULED],
+          },
+        },
+        select: { id: true },
+      });
+      const campaignIds = editableCampaigns.map((item) => item.id);
+
       if (campaignIds.length > 0) {
-        await tx.communicationDelivery.deleteMany({
-          where: { campaignId: { in: campaignIds } },
+        await tx.communicationDelivery.deleteMany({ where: { campaignId: { in: campaignIds } } });
+        await tx.communicationCampaign.updateMany({
+          where: { id: { in: campaignIds } },
+          data: { status: CommunicationCampaignStatus.DRAFT, previewedAt: null },
         });
       }
+
       return tx.communicationTemplate.update({
         where: { id },
         data: {
@@ -185,6 +189,7 @@ export class CommunicationsService implements OnModuleInit {
 
   async createCampaign(dto: CreateCommunicationCampaignDto) {
     await this.requireTemplate(dto.templateId);
+    if (dto.scheduledAt) this.assertFutureSchedule(new Date(dto.scheduledAt));
     if (dto.audience === CommunicationAudience.CUSTOM && !(dto.includeGuestGroupIds?.length)) {
       throw new BadRequestException('Selecione ao menos um convite para uma campanha personalizada');
     }
@@ -239,6 +244,7 @@ export class CommunicationsService implements OnModuleInit {
   }
 
   async schedule(id: string, scheduledAt: Date) {
+    this.assertFutureSchedule(scheduledAt);
     const campaign = await this.requireEditableCampaign(id);
     await this.requireActiveTemplate(campaign.templateId);
     await this.requirePreparedCampaign(id, campaign.previewedAt);
@@ -340,7 +346,7 @@ export class CommunicationsService implements OnModuleInit {
           status: campaign.status,
           updatedAt: campaign.updatedAt,
         },
-        data: { previewedAt, status: CommunicationCampaignStatus.DRAFT },
+        data: { previewedAt },
       });
       if (locked.count === 0) {
         throw new BadRequestException(
@@ -386,9 +392,14 @@ export class CommunicationsService implements OnModuleInit {
         this.prisma.guestGroup.count({ where: { whatsappOptOut: true } }),
         this.prisma.communicationDelivery.groupBy({
           by: ['status'],
+          where: { campaign: { status: { not: CommunicationCampaignStatus.DRAFT } } },
           _count: { _all: true },
         }),
-        this.prisma.whatsAppMessage.count({ where: { needsHuman: true, resolvedAt: null } }),
+        this.prisma.whatsAppMessage.findMany({
+          where: { needsHuman: true, resolvedAt: null },
+          distinct: ['phone'],
+          select: { phone: true },
+        }),
         this.prisma.communicationCampaign.findMany({
           where: {
             status: CommunicationCampaignStatus.SCHEDULED,
@@ -430,7 +441,7 @@ export class CommunicationsService implements OnModuleInit {
         duplicatePhoneGroups: duplicateCounts.reduce((sum, count) => sum + count, 0),
       },
       deliveries,
-      pendingHuman,
+      pendingHuman: pendingHuman.length,
       nextCampaign: campaigns[0] ?? null,
       lastCampaign,
     };
@@ -441,7 +452,7 @@ export class CommunicationsService implements OnModuleInit {
       where: needsHumanOnly ? { needsHuman: true, resolvedAt: null } : undefined,
       include: { guestGroup: { select: { id: true, displayName: true } } },
       orderBy: { createdAt: 'desc' },
-      take: 250,
+      take: needsHumanOnly ? 1000 : 250,
     });
   }
 
@@ -449,7 +460,12 @@ export class CommunicationsService implements OnModuleInit {
     const existing = await this.prisma.whatsAppMessage.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('Mensagem não encontrada');
     const resolved = await this.prisma.whatsAppMessage.updateMany({
-      where: { phone: existing.phone, needsHuman: true, resolvedAt: null },
+      where: {
+        phone: existing.phone,
+        needsHuman: true,
+        resolvedAt: null,
+        createdAt: { lte: existing.createdAt },
+      },
       data: { resolvedAt: new Date(), needsHuman: false },
     });
     return { ok: true, resolved: resolved.count };
@@ -466,6 +482,47 @@ export class CommunicationsService implements OnModuleInit {
     );
     await this.resolveConversationMessage(id);
     return { ok: true };
+  }
+
+  async reactivateGuestWhatsApp(guestGroupId: string) {
+    const guest = await this.prisma.guestGroup.findUnique({ where: { id: guestGroupId } });
+    if (!guest) throw new NotFoundException('Convidado não encontrado');
+    return this.prisma.guestGroup.update({
+      where: { id: guestGroupId },
+      data: { whatsappOptOut: false, whatsappOptOutAt: null },
+    });
+  }
+
+  async retryFailedDeliveries(campaignId: string) {
+    const campaign = await this.prisma.communicationCampaign.findUnique({ where: { id: campaignId } });
+    if (!campaign) throw new NotFoundException('Campanha não encontrada');
+    if (campaign.status !== CommunicationCampaignStatus.FAILED) {
+      throw new BadRequestException('Somente campanhas com falha podem ser retomadas');
+    }
+
+    const retried = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.communicationDelivery.updateMany({
+        where: {
+          campaignId,
+          status: CommunicationDeliveryStatus.FAILED,
+          OR: [{ lastError: null }, { NOT: { lastError: { startsWith: UNCERTAIN_SEND_PREFIX } } }],
+        },
+        data: { status: CommunicationDeliveryStatus.PENDING, failedAt: null, nextAttemptAt: null, lastError: null },
+      });
+      if (result.count === 0) return 0;
+      await tx.communicationCampaign.update({
+        where: { id: campaignId },
+        data: { status: CommunicationCampaignStatus.PROCESSING, startedAt: new Date(), finishedAt: null },
+      });
+      return result.count;
+    });
+
+    if (retried === 0) {
+      throw new BadRequestException(
+        'Não há falhas seguras para retry automático. Entregas com resultado incerto precisam de revisão manual.',
+      );
+    }
+    return { ok: true, retried };
   }
 
   async sendGuestMessage(guestGroupId: string, message: string) {
@@ -626,6 +683,11 @@ export class CommunicationsService implements OnModuleInit {
       return;
     }
 
+    if (!delivery.campaign.template.active) {
+      await this.skipDelivery(delivery.id, delivery.campaignId, 'TEMPLATE_INACTIVE');
+      return;
+    }
+
     const eligibility = this.evaluateEligibility(
       delivery.guestGroup,
       delivery.campaign,
@@ -636,7 +698,7 @@ export class CommunicationsService implements OnModuleInit {
       return;
     }
 
-    const message = this.render(delivery.campaign.template, delivery.guestGroup);
+    const message = delivery.renderedMessage;
     const currentCampaign = await this.prisma.communicationCampaign.findUnique({
       where: { id: delivery.campaignId },
       select: { status: true },
@@ -661,7 +723,11 @@ export class CommunicationsService implements OnModuleInit {
         `campaign:${delivery.campaignId}`,
       );
     } catch (error: any) {
-      await this.recordSendFailure(delivery, error);
+      if (error instanceof WhatsAppAmbiguousSendError) {
+        await this.recordUncertainSendFailure(delivery, error);
+      } else {
+        await this.recordSendFailure(delivery, error);
+      }
       await this.finishCampaignIfDone(delivery.campaignId);
       return;
     }
@@ -687,6 +753,22 @@ export class CommunicationsService implements OnModuleInit {
     }
 
     await this.finishCampaignIfDone(delivery.campaignId);
+  }
+
+  private async recordUncertainSendFailure(
+    delivery: { id: string; attempts: number },
+    error: unknown,
+  ) {
+    await this.prisma.communicationDelivery.update({
+      where: { id: delivery.id },
+      data: {
+        attempts: delivery.attempts + 1,
+        status: CommunicationDeliveryStatus.FAILED,
+        failedAt: new Date(),
+        nextAttemptAt: null,
+        lastError: `${UNCERTAIN_SEND_PREFIX} ${String((error as any)?.message ?? error).slice(0, 900)}`,
+      },
+    });
   }
 
   private async recordSendFailure(
@@ -989,6 +1071,12 @@ export class CommunicationsService implements OnModuleInit {
     }).formatToParts(new Date());
     const hour = Number(parts.find((part) => part.type === 'hour')?.value ?? '0');
     return hour >= startHour && hour < endHour;
+  }
+
+  private assertFutureSchedule(value: Date) {
+    if (!Number.isFinite(value.getTime()) || value.getTime() <= Date.now()) {
+      throw new BadRequestException('Escolha uma data futura para agendar ou utilize Enviar agora');
+    }
   }
 
   private async requirePreparedCampaign(id: string, previewedAt: Date | null) {
