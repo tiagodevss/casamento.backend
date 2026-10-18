@@ -23,7 +23,7 @@ A cerimonialista digital usa o backend NestJS como fonte de verdade para convida
 Defina no `.env` remoto:
 
 ```env
-WPP_SERVER_TAG=2.10.36
+WPP_SERVER_TAG=2.10.58
 WPPCONNECT_URL=http://wppconnect:21465
 WPPCONNECT_SESSION=casamento
 WPPCONNECT_SECRET=<segredo-forte-e-aleatorio>
