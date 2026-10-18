@@ -249,3 +249,48 @@ describe('WhatsAppService durable inbound retries', () => {
     expect(provider.sendText).not.toHaveBeenCalled();
   });
 });
+
+describe('WhatsAppService QR code', () => {
+  const closed = { qrCode: null, raw: { status: 'CLOSED', message: 'QRCode is not available...' } };
+  const ready = { qrCode: 'data:image/png;base64,AAAA', raw: { contentType: 'image/png', size: 4 } };
+
+  it('waits for the QR code to be generated after start-session', async () => {
+    const provider = {
+      startSession: jest.fn(),
+      getQrCode: jest
+        .fn()
+        .mockResolvedValueOnce({ qrCode: null, raw: { status: 'INITIALIZING' } })
+        .mockResolvedValueOnce({ qrCode: null, raw: { status: 'INITIALIZING' } })
+        .mockResolvedValueOnce(ready),
+    };
+    const service = new WhatsAppService(provider as any, {} as any, {} as any);
+
+    await expect(service.qrCode(5, 1)).resolves.toBe(ready);
+    expect(provider.getQrCode).toHaveBeenCalledTimes(3);
+    expect(provider.startSession).not.toHaveBeenCalled();
+  });
+
+  it('restarts a closed session exactly once', async () => {
+    const provider = {
+      startSession: jest.fn().mockResolvedValue({}),
+      getQrCode: jest.fn().mockResolvedValueOnce(closed).mockResolvedValueOnce(closed).mockResolvedValueOnce(ready),
+    };
+    const service = new WhatsAppService(provider as any, {} as any, {} as any);
+
+    await expect(service.qrCode(5, 1)).resolves.toBe(ready);
+    expect(provider.startSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives up after the attempts are exhausted and stops when already connected', async () => {
+    const never = { startSession: jest.fn(), getQrCode: jest.fn().mockResolvedValue({ qrCode: null, raw: { status: 'INITIALIZING' } }) };
+    await expect(new WhatsAppService(never as any, {} as any, {} as any).qrCode(3, 1)).resolves.toEqual({
+      qrCode: null,
+      raw: { status: 'INITIALIZING' },
+    });
+    expect(never.getQrCode).toHaveBeenCalledTimes(3);
+
+    const connected = { startSession: jest.fn(), getQrCode: jest.fn().mockResolvedValue({ qrCode: null, raw: { status: 'CONNECTED' } }) };
+    await new WhatsAppService(connected as any, {} as any, {} as any).qrCode(3, 1);
+    expect(connected.getQrCode).toHaveBeenCalledTimes(1);
+  });
+});
