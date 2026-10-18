@@ -1,0 +1,52 @@
+name: CI Backend
+
+on:
+  push:
+    branches:
+      - main
+      - feat/cerimonialista-digital
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Unit tests
+        run: npm test -- --runInBand
+
+      - name: Build
+        run: npm run build
+
+      - name: Webhook relay integration test
+        run: node deploy/test-webhook-relay.mjs
+
+      - name: Validate Docker Compose
+        run: |
+          cp .env.example .env
+          docker compose --env-file .env -f deploy/docker-compose.yml config -q
+          grep -q 'CUSTOM_USER_DATA_DIR: /usr/src/wpp-server/userDataDir/$' deploy/docker-compose.yml
+          grep -q 'autoDownload: false' deploy/Dockerfile.wppconnect
+          grep -q 'allUnreadOnStart: true' deploy/Dockerfile.wppconnect
+          node --check deploy/webhook-relay.mjs
+
+      - name: Validate derived WPPConnect image
+        run: |
+          docker build --build-arg WPP_SERVER_TAG=2.10.36 -f deploy/Dockerfile.wppconnect -t casamento-wppconnect-ci .
+          docker build -f deploy/Dockerfile.webhook-relay -t casamento-webhook-relay-ci .

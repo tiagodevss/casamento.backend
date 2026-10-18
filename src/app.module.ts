@@ -14,6 +14,8 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 import { MessagesModule } from './messages/messages.module';
 import { HealthModule } from './health/health.module';
 import { SettingsModule } from './settings/settings.module';
+import { WhatsAppModule } from './whatsapp/whatsapp.module';
+import { CommunicationsModule } from './communications/communications.module';
 
 @Module({
   imports: [
@@ -30,6 +32,8 @@ import { SettingsModule } from './settings/settings.module';
     MessagesModule,
     HealthModule,
     SettingsModule,
+    WhatsAppModule,
+    CommunicationsModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
