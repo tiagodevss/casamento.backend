@@ -1,5 +1,4 @@
 import { Test } from '@nestjs/testing';
-import { AppModule } from './app.module';
 import { PrismaService } from './prisma/prisma.service';
 
 describe('AppModule', () => {
@@ -24,6 +23,8 @@ describe('AppModule', () => {
   });
 
   it('resolve o grafo de dependências real (guards JWT em todos os módulos)', async () => {
+    // ConfigModule.forRoot valida o ambiente na importação, então importa após o beforeAll.
+    const { AppModule } = await import('./app.module');
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(PrismaService)
       .useValue({})
