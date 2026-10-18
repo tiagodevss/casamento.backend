@@ -44,6 +44,7 @@ jobs:
           grep -q 'CUSTOM_USER_DATA_DIR: /usr/src/wpp-server/userDataDir/$' deploy/docker-compose.yml
           grep -q 'autoDownload: false' deploy/Dockerfile.wppconnect
           grep -q 'allUnreadOnStart: true' deploy/Dockerfile.wppconnect
+          grep -q 'startAllSession: false' deploy/Dockerfile.wppconnect
           node --check deploy/webhook-relay.mjs
 
       - name: Validate derived WPPConnect image

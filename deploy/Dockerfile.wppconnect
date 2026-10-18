@@ -3,5 +3,6 @@ FROM wppconnect/wppconnect-server:${WPP_SERVER_TAG}
 
 # WPPConnect habilita autoDownload por padrão e injeta a mídia completa em base64
 # no webhook. Para este bot, basta receber metadados/caption e encaminhar mídia
-# para atendimento humano. Falhe o build se o layout upstream mudar.
-RUN node -e "const fs=require('fs'); const p='/usr/src/wpp-server/dist/config.js'; let s=fs.readFileSync(p,'utf8'); const before=s; s=s.replace('autoDownload: true','autoDownload: false').replace('allUnreadOnStart: false','allUnreadOnStart: true'); if(s===before || !s.includes('autoDownload: false') || !s.includes('allUnreadOnStart: true')){throw new Error('WPPConnect webhook safety config not found');} fs.writeFileSync(p,s);"
+# para atendimento humano. startAllSession abriria um Chrome no boot e colidiria com o start-session do painel
+# ("browser is already running"), descartando o QR Code. Falhe o build se o layout upstream mudar.
+RUN node -e "const fs=require('fs'); const p='/usr/src/wpp-server/dist/config.js'; let s=fs.readFileSync(p,'utf8'); const before=s; s=s.replace('autoDownload: true','autoDownload: false').replace('allUnreadOnStart: false','allUnreadOnStart: true').replace('startAllSession: true','startAllSession: false'); if(s===before || !s.includes('autoDownload: false') || !s.includes('allUnreadOnStart: true') || !s.includes('startAllSession: false')){throw new Error('WPPConnect webhook safety config not found');} fs.writeFileSync(p,s);"
