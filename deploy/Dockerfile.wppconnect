@@ -6,3 +6,9 @@ FROM wppconnect/wppconnect-server:${WPP_SERVER_TAG}
 # para atendimento humano. startAllSession abriria um Chrome no boot e colidiria com o start-session do painel
 # ("browser is already running"), descartando o QR Code. Falhe o build se o layout upstream mudar.
 RUN node -e "const fs=require('fs'); const p='/usr/src/wpp-server/dist/config.js'; let s=fs.readFileSync(p,'utf8'); const before=s; s=s.replace('autoDownload: true','autoDownload: false').replace('allUnreadOnStart: false','allUnreadOnStart: true').replace('startAllSession: true','startAllSession: false'); if(s===before || !s.includes('autoDownload: false') || !s.includes('allUnreadOnStart: true') || !s.includes('startAllSession: false')){throw new Error('WPPConnect webhook safety config not found');} fs.writeFileSync(p,s);"
+
+# O WPPConnect Server 2.10.58 encerra a sessão ao receber disconnectedMobile mesmo antes
+# do pareamento: o poller da lib emite o evento na primeira leitura de isRegistered()=false,
+# o status vira CLOSED e o catchQR é descartado (ownsAttempt), então o QR nunca é publicado.
+# disconnectedMobile só deve encerrar uma sessão que estava CONNECTED.
+RUN node -e "const fs=require('fs'); const p='/usr/src/wpp-server/dist/util/createSessionUtil.js'; let s=fs.readFileSync(p,'utf8'); const from='statusFind === _wppconnect.StatusFind.disconnectedMobile)'; const to='(statusFind === _wppconnect.StatusFind.disconnectedMobile && client.status === \'CONNECTED\'))'; if(!s.includes(from)){throw new Error('WPPConnect disconnectedMobile handler not found');} s=s.replace(from,to); if(!s.includes(to)){throw new Error('WPPConnect disconnectedMobile patch failed');} fs.writeFileSync(p,s);"
