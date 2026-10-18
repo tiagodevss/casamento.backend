@@ -56,12 +56,12 @@ export class WhatsAppService {
   }
 
   /**
-   * O WPPConnect gera o QR de forma assíncrona após o start-session. Espera ele
-   * ficar disponível em vez de devolver vazio, e reinicia a sessão uma única vez
-   * se ela tiver sido fechada (auto-close do WPPConnect sem leitura do QR).
+   * O WPPConnect gera o QR de forma assíncrona após o start-session (o estado fica
+   * CLOSED enquanto inicializa), então espera ele ficar disponível em vez de
+   * devolver vazio. Não reinicia a sessão aqui: um segundo start durante a
+   * inicialização trava o Chrome do WPPConnect.
    */
   async qrCode(attempts = 12, delayMs = 2000) {
-    let restarted = false;
     let last: unknown = { qrCode: null };
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       last = await this.provider.getQrCode();
@@ -69,10 +69,6 @@ export class WhatsAppService {
       if (record.qrCode) return last;
       const state = String(asRecord(record.raw).status ?? '').toUpperCase();
       if (state === 'CONNECTED' || state === 'INCHAT' || state === 'ISLOGGED') return last;
-      if (state === 'CLOSED' && !restarted) {
-        restarted = true;
-        await this.provider.startSession();
-      }
       if (attempt < attempts - 1) await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
     return last;

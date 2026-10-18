@@ -251,7 +251,6 @@ describe('WhatsAppService durable inbound retries', () => {
 });
 
 describe('WhatsAppService QR code', () => {
-  const closed = { qrCode: null, raw: { status: 'CLOSED', message: 'QRCode is not available...' } };
   const ready = { qrCode: 'data:image/png;base64,AAAA', raw: { contentType: 'image/png', size: 4 } };
 
   it('waits for the QR code to be generated after start-session', async () => {
@@ -270,16 +269,6 @@ describe('WhatsAppService QR code', () => {
     expect(provider.startSession).not.toHaveBeenCalled();
   });
 
-  it('restarts a closed session exactly once', async () => {
-    const provider = {
-      startSession: jest.fn().mockResolvedValue({}),
-      getQrCode: jest.fn().mockResolvedValueOnce(closed).mockResolvedValueOnce(closed).mockResolvedValueOnce(ready),
-    };
-    const service = new WhatsAppService(provider as any, {} as any, {} as any);
-
-    await expect(service.qrCode(5, 1)).resolves.toBe(ready);
-    expect(provider.startSession).toHaveBeenCalledTimes(1);
-  });
 
   it('gives up after the attempts are exhausted and stops when already connected', async () => {
     const never = { startSession: jest.fn(), getQrCode: jest.fn().mockResolvedValue({ qrCode: null, raw: { status: 'INITIALIZING' } }) };
