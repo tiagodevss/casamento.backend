@@ -46,6 +46,7 @@ jobs:
           grep -q 'allUnreadOnStart: true' deploy/Dockerfile.wppconnect
           grep -q 'startAllSession: false' deploy/Dockerfile.wppconnect
           grep -q 'disconnectedMobile && client.status' deploy/Dockerfile.wppconnect
+          grep -q "client.logout().catch" deploy/Dockerfile.wppconnect
           node --check deploy/webhook-relay.mjs
 
       - name: Validate derived WPPConnect image

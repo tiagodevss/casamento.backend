@@ -12,3 +12,9 @@ RUN node -e "const fs=require('fs'); const p='/usr/src/wpp-server/dist/config.js
 # o status vira CLOSED e o catchQR é descartado (ownsAttempt), então o QR nunca é publicado.
 # disconnectedMobile só deve encerrar uma sessão que estava CONNECTED.
 RUN node -e "const fs=require('fs'); const p='/usr/src/wpp-server/dist/util/createSessionUtil.js'; let s=fs.readFileSync(p,'utf8'); const from='statusFind === _wppconnect.StatusFind.disconnectedMobile)'; const to='(statusFind === _wppconnect.StatusFind.disconnectedMobile && client.status === \'CONNECTED\'))'; if(!s.includes(from)){throw new Error('WPPConnect disconnectedMobile handler not found');} s=s.replace(from,to); if(!s.includes(to)){throw new Error('WPPConnect disconnectedMobile patch failed');} fs.writeFileSync(p,s);"
+
+# O logout do WhatsApp navega a página no meio da chamada e client.logout() lança
+# "Execution context was destroyed" / "InvocationInterface was not inited", mesmo com o
+# vínculo já desfeito. O erro abortava a limpeza e deixava perfil/token antigos no volume,
+# quebrando o próximo pareamento. Tolera a falha e fecha o navegador antes de apagar os dados.
+RUN node -e "const fs=require('fs'); const p='/usr/src/wpp-server/dist/controller/sessionController.js'; let s=fs.readFileSync(p,'utf8'); const from='await client.logout();'; const to='await client.logout().catch(() => {}); await Promise.resolve(client.close && client.close()).catch(() => {});'; if(s.split(from).length!==2){throw new Error('WPPConnect logout call not found');} s=s.replace(from,to); if(!s.includes(to)){throw new Error('WPPConnect logout patch failed');} fs.writeFileSync(p,s);"
