@@ -31,9 +31,38 @@ WHATSAPP_WEBHOOK_SECRET=<outro-segredo-forte-e-aleatorio>
 COMMUNICATION_TIMEZONE=America/Sao_Paulo
 COMMUNICATION_WINDOW_START=9
 COMMUNICATION_WINDOW_END=20
+PARTY_RSVP_OPEN=false
+GIFT_PIX_KEY=<chave-pix-do-casal>
 ```
 
 `WPPCONNECT_SECRET` e `WHATSAPP_WEBHOOK_SECRET` devem ser diferentes.
+
+`PARTY_RSVP_OPEN=false` encerra novas respostas sobre a festa (site, API e menu do WhatsApp); a cerimônia continua aberta, quem já confirmou a festa mantém a resposta e o painel administrativo ainda consegue corrigi-la. `GIFT_PIX_KEY` alimenta `{{pix}}`; vazia, a campanha de Pix pula todos os envios (`NO_PIX_KEY`).
+
+## Plano dos últimos 15 dias (30/10 a 16/11/2026)
+
+O plano está em `src/communications/communication-defaults.ts`. Como `ensureDefaults()` só cria o que não existe, o banco já em uso precisa do script (depois do deploy, que aplica a migration dos ingressos):
+
+```bash
+npm run build
+node scripts/apply-countdown-plan.mjs           # simulação
+node scripts/apply-countdown-plan.mjs --apply   # grava
+```
+
+O script atualiza os templates, desativa os aposentados, remove só rascunhos antigos sem envios, recria o calendário e gera o ingresso (QR Code) de quem confirmou a festa. Pode rodar de novo (por exemplo, se alguém confirmar a festa depois). Todas as campanhas ficam em `DRAFT`: revise o preview e agende no painel.
+
+| Grupo | Audiência | Mensagens |
+|---|---|---|
+| Não confirmaram | `RSVP_PENDING` | 30/10, 04/11, 09/11, 13/11 |
+| Confirmaram só a cerimônia | `CEREMONY_ONLY_CONFIRMED` | semana, amanhã, hoje |
+| Confirmaram a festa | `PARTY_CONFIRMED` | semana, QR Code (12/11), hoje |
+| Todos os confirmados | `CONFIRMED` | apresentação (30/10), presentes (03/11), Pix (11/11), agradecimento (16/11) |
+
+Convites sem telefone válido (`NO_VALID_PHONE` no preview) precisam ser avisados à mão.
+
+## QR Code de entrada da festa
+
+Cada convite que confirmou a festa tem um `ticketToken`. O convidado recebe `{{ingresso}}` (`/ingresso/<token>`), página pública com o QR Code, que aponta para `/admin/checkin/<token>`. Na porta, quem estiver logado como administrador lê o QR com a câmera do celular e vê o resultado (válido, já usado, inválido); "Liberar entrada" registra `checkedInAt` e cada QR vale uma entrada, com opção de desfazer. Teste a leitura com dois celulares reais antes do envio de 12/11.
 
 ## Primeiro deploy
 
@@ -53,7 +82,7 @@ COMMUNICATION_WINDOW_END=20
 Mensagens recebidas são tratadas por regras fixas:
 
 - `1`: link de RSVP e nomes ainda pendentes.
-- `2`: horários/locais. Detalhes da festa só são retornados para convite de festa com `partyAttending=true`.
+- `2`: horários/locais (cerimônia às 15h00). Detalhes da festa só são retornados para convite de festa com `partyAttending=true`, junto do aviso de lotação limitada e do QR Code.
 - `3`: link da lista de presentes com texto opcional/leve.
 - `4`: sinaliza atendimento humano no painel.
 - `PARAR`, `SAIR` ou `STOP`: ativa opt-out e remove o convite das próximas automações.

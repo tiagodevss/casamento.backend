@@ -35,7 +35,7 @@ export class GuestsController {
 
   @Patch(':id/rsvp')
   async updateRsvp(@Param('id') id: string, @Body() dto: ConfirmRsvpDto) {
-    await this.rsvp.confirm(id, dto);
+    await this.rsvp.confirm(id, dto, undefined, { allowPartyChange: true });
     return this.guests.get(id);
   }
 

@@ -4,6 +4,7 @@ import {
   CommunicationDeliveryStatus,
   WhatsAppMessageDirection,
 } from '@prisma/client';
+import { isPartyRsvpOpen } from '../common/party-rsvp';
 import { PrismaService } from '../prisma/prisma.service';
 import { normalizeBrazilPhone, phoneFromWhatsAppId } from './phone.util';
 import {
@@ -387,6 +388,7 @@ export class WhatsAppService {
         .filter((member) => member.attending == null)
         .map((member) => member.name);
       const partyPending =
+        isPartyRsvpOpen(this.config) &&
         guest.invitedToParty &&
         guest.members.some((member) => member.attending === true) &&
         guest.rsvpResponse?.partyAttending == null;
@@ -401,7 +403,7 @@ export class WhatsAppService {
       let message =
         '*Cerimônia* 💍\n' +
         '📅 14/11/2026\n' +
-        '🕓 16h00\n' +
+        '🕓 15h00\n' +
         '⛪ Igreja Universal Paulínia\n' +
         '📍 Av. José Paulino, 610 — Centro, Paulínia / SP\n' +
         '🗺️ https://www.google.com/maps/search/?api=1&query=Igreja+Universal+Paulínia+Av.+José+Paulino+610+Centro+Paulínia+SP';
@@ -411,7 +413,8 @@ export class WhatsAppService {
           '\n\n*Recepção* 🥂\n' +
           'Após a cerimônia\n' +
           '📍 Rua Praxiteles F. Neves, 63 - Patropi - Paulínia/SP\n' +
-          '🗺️ https://maps.app.goo.gl/xCx15d8vKrzTXubV8';
+          '🗺️ https://maps.app.goo.gl/xCx15d8vKrzTXubV8\n\n' +
+          'A festa tem número limitado de convidados. Antes do casamento enviaremos um QR Code que vale como a entrada da sua família. 🎟️';
       }
       return { eventType: 'menu-locations', message };
     }

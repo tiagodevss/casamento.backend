@@ -16,6 +16,7 @@ import { HealthModule } from './health/health.module';
 import { SettingsModule } from './settings/settings.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
 import { CommunicationsModule } from './communications/communications.module';
+import { TicketsModule } from './tickets/tickets.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { CommunicationsModule } from './communications/communications.module';
     SettingsModule,
     WhatsAppModule,
     CommunicationsModule,
+    TicketsModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

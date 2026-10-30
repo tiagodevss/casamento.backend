@@ -14,6 +14,7 @@ import {
   CommunicationTemplateScope,
   Prisma,
 } from '@prisma/client';
+import { isPartyRsvpOpen } from '../common/party-rsvp';
 import { PrismaService } from '../prisma/prisma.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { WhatsAppAmbiguousSendError } from '../whatsapp/whatsapp-provider.interface';
@@ -28,7 +29,21 @@ import {
   DEFAULT_COMMUNICATION_TEMPLATES,
 } from './communication-defaults';
 
-const WEDDING_AT = new Date('2026-11-14T16:00:00-03:00');
+const WEDDING_AT = new Date('2026-11-14T15:00:00-03:00');
+
+/** Número do dia de calendário (dias desde 1970) de um instante em um fuso IANA. */
+function calendarDayNumber(value: Date, timeZone: string) {
+  const [year, month, day] = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+    .format(value)
+    .split('-')
+    .map(Number);
+  return Math.round(Date.UTC(year, month - 1, day) / 86_400_000);
+}
 const CEREMONY_MAPS =
   'https://www.google.com/maps/search/?api=1&query=Igreja+Universal+Paulínia+Av.+José+Paulino+610+Centro+Paulínia+SP';
 const PARTY_MAPS = 'https://maps.app.goo.gl/xCx15d8vKrzTXubV8';
@@ -39,6 +54,7 @@ const PARTY_SENSITIVE_MARKERS = [
   '{{endereco_festa}}',
   '{{local_festa}}',
   '{{horario_festa}}',
+  '{{ingresso}}',
   'Rua Praxiteles F. Neves',
   'maps.app.goo.gl/xCx15d8vKrzTXubV8',
 ];
@@ -771,6 +787,7 @@ export class CommunicationsService implements OnModuleInit {
       delivery.guestGroup,
       delivery.campaign,
       delivery.campaign.template.scope,
+      `${delivery.campaign.template.bodySingle}\n${delivery.campaign.template.bodyGroup}`,
     );
     if ('reason' in eligibility) {
       await this.skipDelivery(delivery.id, delivery.campaignId, eligibility.reason);
@@ -996,7 +1013,12 @@ export class CommunicationsService implements OnModuleInit {
     const excluded: PreviewExcluded[] = [];
     for (const group of groups) {
       const phone = group.phoneNormalized ?? normalizeBrazilPhone(group.phone);
-      const eligibility = this.evaluateEligibility(group, campaign, campaign.template.scope);
+      const eligibility = this.evaluateEligibility(
+        group,
+        campaign,
+        campaign.template.scope,
+        `${campaign.template.bodySingle}\n${campaign.template.bodyGroup}`,
+      );
       if ('reason' in eligibility) {
         excluded.push({
           guestGroupId: group.id,
@@ -1042,6 +1064,7 @@ export class CommunicationsService implements OnModuleInit {
       'audience' | 'includeGuestGroupIds' | 'requireInviteSent'
     >,
     templateScope: CommunicationTemplateScope = CommunicationTemplateScope.GENERAL,
+    templateBody = '',
   ): EligibilityResult {
     const phone = group.phoneNormalized ?? normalizeBrazilPhone(group.phone);
     if (!phone) return { eligible: false, reason: 'NO_VALID_PHONE' };
@@ -1049,10 +1072,23 @@ export class CommunicationsService implements OnModuleInit {
     if (campaign.requireInviteSent && !group.inviteSent) {
       return { eligible: false, reason: 'INVITE_NOT_SENT' };
     }
+    // Nunca enviar um link de ingresso vazio.
+    if (templateBody.includes('{{ingresso}}') && !group.ticketToken) {
+      return { eligible: false, reason: 'NO_PARTY_TICKET' };
+    }
+    // Nem uma chave Pix em branco.
+    if (
+      templateBody.includes('{{pix}}') &&
+      !this.config.get<string>('GIFT_PIX_KEY', '')?.trim()
+    ) {
+      return { eligible: false, reason: 'NO_PIX_KEY' };
+    }
 
     const memberPending = group.members.some((member) => member.attending == null);
     const hasConfirmed = group.members.some((member) => member.attending === true);
+    // Com a festa encerrada, a ausência de resposta sobre a festa não deixa o convite "pendente".
     const partyPending =
+      isPartyRsvpOpen(this.config) &&
       group.invitedToParty &&
       hasConfirmed &&
       group.rsvpResponse?.partyAttending == null;
@@ -1113,13 +1149,16 @@ export class CommunicationsService implements OnModuleInit {
       .filter((member) => member.attending === false)
       .map((member) => member.name);
     const partyPending =
+      isPartyRsvpOpen(this.config) &&
       group.invitedToParty &&
       confirmed.length > 0 &&
       group.rsvpResponse?.partyAttending == null;
     const pendingLabels = partyPending ? [...pending, 'confirmação da recepção'] : pending;
+    const timeZone = this.config.get<string>('COMMUNICATION_TIMEZONE', 'America/Sao_Paulo');
+    // Dias de calendário (não horas): às 10h de 03/11 faltam 11 dias, não 12.
     const daysRemaining = Math.max(
       0,
-      Math.ceil((WEDDING_AT.getTime() - Date.now()) / 86_400_000),
+      calendarDayNumber(WEDDING_AT, timeZone) - calendarDayNumber(new Date(), timeZone),
     );
     const body = group.members.length === 1 ? template.bodySingle : template.bodyGroup;
     const variables: Record<string, string> = {
@@ -1134,7 +1173,9 @@ export class CommunicationsService implements OnModuleInit {
       presentes: `${appUrl}/presentes?convite=${group.id}`,
       site: appUrl,
       data_casamento: '14/11/2026',
-      horario_cerimonia: '16h00',
+      horario_cerimonia: '15h00',
+      pix: this.config.get<string>('GIFT_PIX_KEY', ''),
+      ingresso: group.ticketToken ? `${appUrl}/ingresso/${group.ticketToken}` : '',
       local_cerimonia: 'Igreja Universal Paulínia',
       endereco_cerimonia: 'Av. José Paulino, 610 — Centro, Paulínia / SP',
       maps_cerimonia: CEREMONY_MAPS,

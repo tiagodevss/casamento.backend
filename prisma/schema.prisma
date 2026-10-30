@@ -32,6 +32,8 @@ model GuestGroup {
   phoneNormalized         String?
   whatsappOptOut          Boolean                 @default(false)
   whatsappOptOutAt        DateTime?
+  ticketToken             String?                 @unique
+  checkedInAt             DateTime?
   notes                   String?
   createdAt               DateTime                @default(now())
   updatedAt               DateTime                @updatedAt

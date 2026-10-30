@@ -35,6 +35,10 @@ export const envValidationSchema = Joi.object({
   COMMUNICATION_TIMEZONE: Joi.string().default('America/Sao_Paulo'),
   COMMUNICATION_WINDOW_START: Joi.number().integer().min(0).max(23).default(9),
   COMMUNICATION_WINDOW_END: Joi.number().integer().min(1).max(24).default(20),
+  // false encerra novas respostas sobre a festa; a confirmação da cerimônia continua aberta.
+  PARTY_RSVP_OPEN: Joi.boolean().default(true),
+  // Chave Pix exibida na variável {{pix}} das mensagens; vazio mantém a variável em branco.
+  GIFT_PIX_KEY: Joi.string().allow('').default(''),
 }).custom((value, helpers) => {
   if (
     value.NODE_ENV === 'production' &&

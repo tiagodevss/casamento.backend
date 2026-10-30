@@ -1,4 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { isPartyRsvpOpen } from '../common/party-rsvp';
 import { PrismaService } from '../prisma/prisma.service';
 import { normalizeName } from '../common/normalize-name';
 import { ConfirmRsvpDto } from './confirm-rsvp.dto';
@@ -13,7 +15,10 @@ const membersInclude = {
 
 @Injectable()
 export class RsvpService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
   async search(query: string) {
     const normalizedQuery = normalizeName(query ?? '');
@@ -61,6 +66,7 @@ export class RsvpService {
       id: group.id,
       displayName: group.displayName,
       invitedToParty: group.invitedToParty,
+      partyRsvpOpen: isPartyRsvpOpen(this.config),
       hasResponded: Boolean(group.rsvpResponse),
       partyAttending: group.rsvpResponse?.partyAttending ?? null,
       diet: group.rsvpResponse?.diet ?? null,
@@ -74,12 +80,39 @@ export class RsvpService {
     };
   }
 
-  async confirm(guestGroupId: string, dto: ConfirmRsvpDto, ip?: string) {
+  /**
+   * `allowPartyChange` é usado pelo painel administrativo: com a festa encerrada para os
+   * convidados, a equipe ainda precisa conseguir corrigir uma resposta manualmente.
+   */
+  async confirm(
+    guestGroupId: string,
+    dto: ConfirmRsvpDto,
+    ip?: string,
+    options: { allowPartyChange?: boolean } = {},
+  ) {
     const group = await this.prisma.guestGroup.findUnique({
       where: { id: guestGroupId },
-      include: { members: true },
+      include: { members: true, rsvpResponse: true },
     });
     if (!group) throw new NotFoundException('Convidado não encontrado');
+
+    const partyLocked = !options.allowPartyChange && !isPartyRsvpOpen(this.config);
+    const currentPartyAttending = group.rsvpResponse?.partyAttending ?? null;
+    if (
+      partyLocked &&
+      dto.partyAttending !== undefined &&
+      dto.partyAttending !== currentPartyAttending
+    ) {
+      throw new BadRequestException(
+        'As confirmações para a festa foram encerradas. Você ainda pode confirmar a cerimônia.',
+      );
+    }
+    // Com a festa encerrada a resposta anterior é preservada, nunca apagada.
+    const nextPartyAttending = !group.invitedToParty
+      ? null
+      : partyLocked
+        ? currentPartyAttending
+        : (dto.partyAttending ?? null);
 
     if (dto.partyAttending !== undefined && !group.invitedToParty) {
       throw new BadRequestException('Este convite não inclui a festa');
@@ -106,13 +139,13 @@ export class RsvpService {
         where: { guestGroupId },
         create: {
           guestGroupId,
-          partyAttending: group.invitedToParty ? dto.partyAttending ?? null : null,
+          partyAttending: nextPartyAttending,
           diet: dto.diet,
           message: dto.message,
           respondedIp: ip,
         },
         update: {
-          partyAttending: group.invitedToParty ? dto.partyAttending ?? null : null,
+          partyAttending: nextPartyAttending,
           diet: dto.diet,
           message: dto.message,
           respondedIp: ip,
