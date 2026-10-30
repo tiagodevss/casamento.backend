@@ -104,7 +104,7 @@ export class RsvpService {
       dto.partyAttending !== currentPartyAttending
     ) {
       throw new BadRequestException(
-        'As confirmações para a festa foram encerradas. Você ainda pode confirmar a cerimônia.',
+        'Não foi possível alterar a resposta sobre a festa. Fale com os noivos se precisar de ajuda.',
       );
     }
     // Com a festa encerrada a resposta anterior é preservada, nunca apagada.
