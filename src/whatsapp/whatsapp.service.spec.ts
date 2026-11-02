@@ -282,4 +282,63 @@ describe('WhatsAppService QR code', () => {
     await new WhatsAppService(connected as any, {} as any, {} as any).qrCode(3, 1);
     expect(connected.getQrCode).toHaveBeenCalledTimes(1);
   });
+  it('marks a SENT delivery as FAILED on ack -1, matching the id by its trailing hash', async () => {
+    const prisma = {
+      communicationDelivery: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'delivery-1',
+          campaignId: 'campaign-1',
+          status: CommunicationDeliveryStatus.SENT,
+          sentAt: new Date(),
+          deliveredAt: null,
+          readAt: null,
+        }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      communicationCampaign: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    };
+    const service = new WhatsAppService({} as any, prisma as any, {} as any);
+
+    await (service as any).handleAck({ id: { _serialized: 'true_123@lid_3EB0ABCDEF123456' }, ack: -1 });
+
+    expect(prisma.communicationDelivery.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          OR: [
+            { providerMessageId: 'true_123@lid_3EB0ABCDEF123456' },
+            { providerMessageId: { endsWith: '_3EB0ABCDEF123456' } },
+          ],
+        },
+      }),
+    );
+    expect(prisma.communicationDelivery.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'delivery-1' },
+        data: expect.objectContaining({ status: CommunicationDeliveryStatus.FAILED, sentAt: null }),
+      }),
+    );
+    expect(prisma.communicationCampaign.updateMany).toHaveBeenCalled();
+  });
+
+  it('never fails a delivery that was already delivered when a late ack -1 arrives', async () => {
+    const prisma = {
+      communicationDelivery: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'delivery-1',
+          campaignId: 'campaign-1',
+          status: CommunicationDeliveryStatus.DELIVERED,
+          sentAt: new Date(),
+          deliveredAt: new Date(),
+          readAt: null,
+        }),
+        update: jest.fn(),
+      },
+      communicationCampaign: { updateMany: jest.fn() },
+    };
+    const service = new WhatsAppService({} as any, prisma as any, {} as any);
+
+    await (service as any).handleAck({ id: 'true_1@lid_3EB0ABCDEF123456', ack: -1 });
+
+    expect(prisma.communicationDelivery.update).not.toHaveBeenCalled();
+  });
 });

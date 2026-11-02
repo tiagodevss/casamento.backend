@@ -30,6 +30,17 @@ function extractMessageId(value: unknown): string | undefined {
   if (direct) return direct;
   if (!value || typeof value !== 'object') return undefined;
   const record = value as Record<string, unknown>;
+  // WPPConnect's send-message answers { status, response: [{ ack, id: 'true_<chat>_<hash>', ... }] }.
+  // Without this the provider id was never stored, so no ACK event could be matched to a delivery.
+  if (Array.isArray(record.response)) {
+    for (const item of record.response) {
+      const nested = extractMessageId(item);
+      if (nested) return nested;
+    }
+  } else if (record.response && typeof record.response === 'object') {
+    const nested = extractMessageId(record.response);
+    if (nested) return nested;
+  }
   if (typeof record.id === 'string') return record.id;
   if (record.id && typeof record.id === 'object') {
     return findStringByKeys(record.id, ['_serialized', 'id']);

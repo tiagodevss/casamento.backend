@@ -10,6 +10,11 @@ async function bootstrap() {
   // since re-serializing the parsed JSON body would break the AbacatePay signature check.
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
 
+  // The WPPConnect webhook relay forwards payloads up to 2 MiB (MAX_BODY_BYTES); the Express default
+  // of 100 kB rejected larger events with 413 and left the relay retrying the same file forever.
+  app.useBodyParser('json', { limit: '3mb' });
+  app.useBodyParser('urlencoded', { limit: '3mb', extended: true });
+
   const uploadsDir = process.env.UPLOADS_DIR
     ? resolve(process.env.UPLOADS_DIR)
     : resolve(process.cwd(), 'uploads');

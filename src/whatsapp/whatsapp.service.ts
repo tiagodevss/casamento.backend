@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  CommunicationCampaignStatus,
   CommunicationDeliveryStatus,
   WhatsAppMessageDirection,
 } from '@prisma/client';
@@ -15,6 +16,9 @@ import {
 const STOP_WORDS = new Set(['parar', 'sair', 'stop', 'cancelar mensagens']);
 const MENU_WORDS = new Set(['oi', 'ola', 'olá', 'menu', 'inicio', 'início', 'ajuda']);
 const MEDIA_TYPES = new Set(['audio', 'ptt', 'image', 'video', 'document', 'sticker', 'gif']);
+const ACK_FAILED = -1;
+const ACK_FAILED_PREFIX = 'ACK_FAILED:';
+
 const DELIVERY_RANK: Partial<Record<CommunicationDeliveryStatus, number>> = {
   [CommunicationDeliveryStatus.SENT]: 1,
   [CommunicationDeliveryStatus.DELIVERED]: 2,
@@ -33,8 +37,7 @@ function extractProviderId(value: unknown): string | undefined {
   const id = asRecord(record.id);
   if (typeof id._serialized === 'string') return id._serialized;
   if (typeof id.id === 'string') return id.id;
-  const data = asRecord(record.data);
-  if (data !== record) return extractProviderId(data);
+  if (record.data && typeof record.data === 'object') return extractProviderId(record.data);
   return undefined;
 }
 
@@ -145,18 +148,21 @@ export class WhatsAppService {
     const providerMessageId = extractProviderId(data);
     if (!providerMessageId) return;
     const ack = Number(data.ack ?? data.status ?? 0);
-    if (!Number.isFinite(ack) || ack <= 0) return;
+    if (!Number.isFinite(ack) || (ack <= 0 && ack !== ACK_FAILED)) return;
 
-    const nextStatus =
-      ack >= 3
-        ? CommunicationDeliveryStatus.READ
-        : ack >= 2
-          ? CommunicationDeliveryStatus.DELIVERED
-          : CommunicationDeliveryStatus.SENT;
+    // The send response keys the message by phone ("true_<phone>@c.us_<hash>") while ACK events
+    // may key it by LID ("true_<lid>@lid_<hash>"). Only the trailing hash is common to both.
+    const hash = providerMessageId.split('_').pop();
     const delivery = await this.prisma.communicationDelivery.findFirst({
-      where: { providerMessageId },
+      where: {
+        OR: [
+          { providerMessageId },
+          ...(hash && hash.length >= 8 ? [{ providerMessageId: { endsWith: `_${hash}` } }] : []),
+        ],
+      },
       select: {
         id: true,
+        campaignId: true,
         status: true,
         sentAt: true,
         deliveredAt: true,
@@ -164,6 +170,39 @@ export class WhatsAppService {
       },
     });
     if (!delivery) return;
+
+    if (ack === ACK_FAILED) {
+      // WhatsApp refused the message after the provider accepted it (e.g. new-conversation block).
+      // A message that was already delivered/read is never downgraded.
+      if (
+        delivery.status !== CommunicationDeliveryStatus.SENT &&
+        delivery.status !== CommunicationDeliveryStatus.PROCESSING
+      ) {
+        return;
+      }
+      await this.prisma.communicationDelivery.update({
+        where: { id: delivery.id },
+        data: {
+          status: CommunicationDeliveryStatus.FAILED,
+          failedAt: new Date(),
+          sentAt: null,
+          lastError: `${ACK_FAILED_PREFIX} WhatsApp rejeitou a mensagem (ack -1); não entregue. Seguro para reenviar.`,
+        },
+      });
+      // A COMPLETED campaign could not be resumed; reopen it as FAILED so "retry failed" works.
+      await this.prisma.communicationCampaign.updateMany({
+        where: { id: delivery.campaignId, status: CommunicationCampaignStatus.COMPLETED },
+        data: { status: CommunicationCampaignStatus.FAILED },
+      });
+      return;
+    }
+
+    const nextStatus =
+      ack >= 3
+        ? CommunicationDeliveryStatus.READ
+        : ack >= 2
+          ? CommunicationDeliveryStatus.DELIVERED
+          : CommunicationDeliveryStatus.SENT;
 
     const currentRank = DELIVERY_RANK[delivery.status] ?? 0;
     const nextRank = DELIVERY_RANK[nextStatus] ?? 0;

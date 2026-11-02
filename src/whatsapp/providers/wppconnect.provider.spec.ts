@@ -1,4 +1,4 @@
-import { throwError } from 'rxjs';
+import { of, throwError } from 'rxjs';
 import { WppConnectProvider } from './wppconnect.provider';
 import { WhatsAppAmbiguousSendError } from '../whatsapp-provider.interface';
 
@@ -26,5 +26,25 @@ describe('WppConnectProvider send reliability', () => {
       WhatsAppAmbiguousSendError,
     );
     expect(http.post).toHaveBeenCalledTimes(1);
+  });
+
+  it('stores the message id from the real WPPConnect send-message response shape', async () => {
+    const http = {
+      post: jest.fn().mockReturnValue(
+        of({
+          data: {
+            status: 'success',
+            response: [{ ack: 0, id: 'true_5519999999999@c.us_3EB0ABCDEF123456', sendMsgResult: {} }],
+          },
+        }),
+      ),
+    };
+    const config = { get: jest.fn((key: string, fallback?: string) => fallback ?? 'x') };
+    const provider = new WppConnectProvider(http as any, config as any);
+    (provider as any).token = 'already-generated-token';
+
+    const result = await provider.sendText('5519999999999', 'Teste');
+
+    expect(result.providerMessageId).toBe('true_5519999999999@c.us_3EB0ABCDEF123456');
   });
 });
