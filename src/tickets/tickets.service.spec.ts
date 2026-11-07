@@ -20,6 +20,7 @@ function setup(overrides: Record<string, unknown> | null = {}) {
   const prisma = {
     guestGroup: {
       findUnique: jest.fn(async () => state),
+      findMany: jest.fn(async () => (state ? [state] : [])),
       updateMany: jest.fn(async ({ data }: any) => {
         if (state && !state.checkedInAt) state.checkedInAt = data.checkedInAt;
         return { count: 1 };
@@ -83,6 +84,46 @@ describe('TicketsService', () => {
     }
     const { service } = setup({ members: [{ name: 'Ana', attending: false }] });
     expect((await service.lookup(TOKEN)).status).toBe('INVALID');
+  });
+
+  it('lista os ingressos para o painel com totais e link do ingresso', async () => {
+    const entered = {
+      id: 'g2',
+      displayName: 'Já entrou',
+      side: 'BRIDE',
+      ticketToken: 'tok_entrou_abcdefghijkl',
+      checkedInAt: new Date('2026-11-14T22:00:00Z'),
+      phoneNormalized: '5519999990000',
+      members: [{ name: 'Dani', attending: true }],
+      rsvpResponse: { partyAttending: true },
+    };
+    const invalid = {
+      id: 'g3',
+      displayName: 'Desistiu',
+      side: 'GROOM',
+      ticketToken: 'tok_desistiu_abcdefghij',
+      checkedInAt: null,
+      members: [{ name: 'Edu', attending: false }],
+      rsvpResponse: { partyAttending: false },
+    };
+    const { service, prisma, state } = setup();
+    prisma.guestGroup.findMany.mockResolvedValueOnce([state, entered, invalid] as any);
+
+    const result = await service.listForAdmin();
+
+    expect(result.summary).toEqual({
+      groups: 2,
+      people: 3,
+      enteredGroups: 1,
+      enteredPeople: 1,
+      invalidGroups: 1,
+    });
+    expect(result.tickets.map((t) => t.status)).toEqual(['READY', 'ALREADY_IN', 'INVALID']);
+    expect(result.tickets[0].ticketUrl).toBe(`https://tiagoegabriela.com.br/ingresso/${TOKEN}`);
+    expect(result.tickets[1].hasPhone).toBe(true);
+    expect(prisma.guestGroup.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { ticketToken: { not: null } } }),
+    );
   });
 
   it('desfaz uma leitura feita por engano', async () => {

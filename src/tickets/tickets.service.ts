@@ -31,6 +31,43 @@ export class TicketsService {
     };
   }
 
+  /** Lista de ingressos para o painel: só grupos que têm token, com o andamento da entrada. */
+  async listForAdmin() {
+    const groups = await this.prisma.guestGroup.findMany({
+      where: { ticketToken: { not: null } },
+      include: ticketInclude,
+      orderBy: { displayName: 'asc' },
+    });
+
+    const tickets = groups.map((group) => {
+      const view = this.view(group);
+      return {
+        id: group.id,
+        displayName: view.displayName,
+        side: group.side,
+        people: view.people,
+        peopleCount: view.peopleCount,
+        status: view.status,
+        checkedInAt: view.checkedInAt,
+        hasPhone: Boolean(group.phoneNormalized ?? group.phone),
+        ticketUrl: this.ticketUrl(group.ticketToken as string),
+      };
+    });
+
+    const valid = tickets.filter((ticket) => ticket.status !== 'INVALID');
+    const entered = valid.filter((ticket) => ticket.status === 'ALREADY_IN');
+    return {
+      summary: {
+        groups: valid.length,
+        people: valid.reduce((sum, ticket) => sum + ticket.peopleCount, 0),
+        enteredGroups: entered.length,
+        enteredPeople: entered.reduce((sum, ticket) => sum + ticket.peopleCount, 0),
+        invalidGroups: tickets.length - valid.length,
+      },
+      tickets,
+    };
+  }
+
   async lookup(token: string) {
     return this.view(await this.requireGroup(token));
   }
@@ -82,10 +119,15 @@ export class TicketsService {
     };
   }
 
+  private appUrl() {
+    return this.config.get<string>('APP_URL', 'https://tiagoegabriela.com.br').replace(/\/$/, '');
+  }
+
   private checkinUrl(token: string) {
-    const appUrl = this.config
-      .get<string>('APP_URL', 'https://tiagoegabriela.com.br')
-      .replace(/\/$/, '');
-    return `${appUrl}/admin/checkin/${token}`;
+    return `${this.appUrl()}/admin/checkin/${token}`;
+  }
+
+  private ticketUrl(token: string) {
+    return `${this.appUrl()}/ingresso/${token}`;
   }
 }

@@ -14,6 +14,17 @@ export class TicketsController {
   }
 }
 
+@Controller('admin/tickets')
+@UseGuards(JwtStrategyGuard)
+export class AdminTicketsController {
+  constructor(private readonly tickets: TicketsService) {}
+
+  @Get()
+  list() {
+    return this.tickets.listForAdmin();
+  }
+}
+
 @Controller('admin/checkin')
 @UseGuards(JwtStrategyGuard)
 export class CheckinController {
