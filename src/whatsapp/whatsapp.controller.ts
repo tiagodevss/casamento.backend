@@ -30,7 +30,8 @@ export class WhatsAppController {
 
   @Get('qrcode')
   qrcode() {
-    return this.whatsapp.qrCode();
+    // Uma tentativa por chamada: o painel faz polling, sem prender a requisição por ~24 s.
+    return this.whatsapp.qrCode(1);
   }
 
   @Post('disconnect')

@@ -143,16 +143,62 @@ export class WppConnectProvider implements WhatsAppProvider {
     return { connected, state, raw };
   }
 
-  startSession() {
+  private lastStartAt = 0;
+  private starting?: Promise<unknown>;
+
+  private async sessionState(): Promise<string> {
+    try {
+      const raw = await this.request<unknown>(
+        'get',
+        `/api/${encodeURIComponent(this.session)}/status-session`,
+      );
+      return String(findStringByKeys(raw, ['status']) ?? '').toUpperCase();
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Idempotente: um segundo start-session durante a inicialização trava o Chrome do
+   * WPPConnect ("browser is already running") e descarta o QR. Ignora o pedido se a sessão
+   * já está conectada/em andamento ou se um start foi disparado há pouco.
+   */
+  async startSession() {
+    if (this.starting) return this.starting;
+    const sinceLastStart = Date.now() - this.lastStartAt;
+    if (sinceLastStart < WppConnectProvider.START_COOLDOWN_MS) {
+      return { skipped: true, reason: 'START_IN_PROGRESS' };
+    }
+
+    const state = await this.sessionState();
+    if (WppConnectProvider.ACTIVE_STATES.has(state)) {
+      return { skipped: true, reason: state };
+    }
+
+    this.lastStartAt = Date.now();
     // WEBHOOK_URL is configured on the WPPConnect container itself. Do not override it
     // here: keeping the webhook secret in one source of truth avoids accidentally
     // starting a session with a secretless callback URL.
-    return this.request(
+    this.starting = this.request(
       'post',
       `/api/${encodeURIComponent(this.session)}/start-session`,
       { waitQrCode: false },
-    );
+    ).finally(() => {
+      this.starting = undefined;
+    });
+    return this.starting;
   }
+
+  private static readonly START_COOLDOWN_MS = 45_000;
+  private static readonly ACTIVE_STATES = new Set([
+    'CONNECTED',
+    'INCHAT',
+    'ISLOGGED',
+    'INITIALIZING',
+    'QRCODE',
+    'STARTING',
+    'OPENING',
+  ]);
 
   async getQrCode() {
     const token = await this.accessToken();

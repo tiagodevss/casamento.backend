@@ -7,6 +7,7 @@ import { WhatsAppController } from './whatsapp.controller';
 import { WhatsAppWebhookController } from './whatsapp-webhook.controller';
 import { WHATSAPP_PROVIDER } from './whatsapp-provider.interface';
 import { WhatsAppService } from './whatsapp.service';
+import { WhatsAppSessionWatchdog } from './whatsapp-session.watchdog';
 
 @Module({
   imports: [HttpModule, PrismaModule, AuthModule],
@@ -14,6 +15,7 @@ import { WhatsAppService } from './whatsapp.service';
   providers: [
     WppConnectProvider,
     { provide: WHATSAPP_PROVIDER, useExisting: WppConnectProvider },
+    WhatsAppSessionWatchdog,
     WhatsAppService,
   ],
   exports: [WHATSAPP_PROVIDER, WhatsAppService],

@@ -53,6 +53,11 @@ services:
     image: casamento-wppconnect:${WPP_SERVER_TAG:-2.10.71}
     container_name: casamento_wppconnect
     restart: unless-stopped
+    # Hostname estável: o lock do Chrome no perfil persistente carrega o hostname.
+    hostname: casamento-wppconnect
+    # Chrome precisa de /dev/shm maior que os 64 MB padrão e de um init para colher zumbis.
+    shm_size: 1gb
+    init: true
     environment:
       SECRET_KEY: ${WPPCONNECT_SECRET}
       WEBHOOK_URL: http://webhook-relay:8080/webhook?secret=${WHATSAPP_WEBHOOK_SECRET}
@@ -67,6 +72,12 @@ services:
       - casamento_wpp_tokens:/usr/src/wpp-server/tokens
       - casamento_wpp_user_data:/usr/src/wpp-server/userDataDir
       - casamento_wpp_logs:/usr/src/wpp-server/log
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:21465/api-docs/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks:
       - casamento-internal
 

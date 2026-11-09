@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   CommunicationCampaignStatus,
@@ -12,6 +12,7 @@ import {
   WHATSAPP_PROVIDER,
   WhatsAppProvider,
 } from './whatsapp-provider.interface';
+import { WhatsAppSessionWatchdog } from './whatsapp-session.watchdog';
 
 const STOP_WORDS = new Set(['parar', 'sair', 'stop', 'cancelar mensagens']);
 const MENU_WORDS = new Set(['oi', 'ola', 'olá', 'menu', 'inicio', 'início', 'ajuda']);
@@ -49,6 +50,7 @@ export class WhatsAppService {
     @Inject(WHATSAPP_PROVIDER) private readonly provider: WhatsAppProvider,
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    @Optional() private readonly watchdog?: WhatsAppSessionWatchdog,
   ) {}
 
   status() {
@@ -56,6 +58,7 @@ export class WhatsAppService {
   }
 
   connect() {
+    this.watchdog?.resume();
     return this.provider.startSession();
   }
 
@@ -79,6 +82,8 @@ export class WhatsAppService {
   }
 
   disconnect() {
+    // Desconexão intencional: o watchdog não deve religar a sessão por conta própria.
+    this.watchdog?.pause();
     return this.provider.disconnect();
   }
 

@@ -13,6 +13,11 @@ RUN node -e "const fs=require('fs'); const p='/usr/src/wpp-server/dist/config.js
 # disconnectedMobile só deve encerrar uma sessão que estava CONNECTED.
 RUN node -e "const fs=require('fs'); const p='/usr/src/wpp-server/dist/util/createSessionUtil.js'; let s=fs.readFileSync(p,'utf8'); const from='statusFind === _wppconnect.StatusFind.disconnectedMobile)'; const to='(statusFind === _wppconnect.StatusFind.disconnectedMobile && client.status === \'CONNECTED\'))'; if(!s.includes(from)){throw new Error('WPPConnect disconnectedMobile handler not found');} s=s.replace(from,to); if(!s.includes(to)){throw new Error('WPPConnect disconnectedMobile patch failed');} fs.writeFileSync(p,s);"
 
+# Limpa o lock de perfil do Chrome deixado por containers anteriores (ver o script).
+COPY deploy/wppconnect-entrypoint.sh /usr/local/bin/wppconnect-entrypoint.sh
+RUN chmod +x /usr/local/bin/wppconnect-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/wppconnect-entrypoint.sh"]
+
 # O logout do WhatsApp navega a página no meio da chamada e client.logout() lança
 # "Execution context was destroyed" / "InvocationInterface was not inited", mesmo com o
 # vínculo já desfeito. O erro abortava a limpeza e deixava perfil/token antigos no volume,
